@@ -25,9 +25,9 @@ def parse_output_txt(file_path: Path):
         # Each frame -> list of objects with type + position
         objects = []
         for match in re.finditer(
-            r"🧩 Object ID: (?P<id>\d+).*?Type: (?P<type>\w+)"
-            r".*?Bounding Box: top=(?P<top>[-\d.]+), bottom=(?P<bottom>[-\d.]+), "
-            r"left=(?P<left>[-\d.]+), right=(?P<right>[-\d.]+)",
+            r"🧩 Object ID:\s*(?P<id>\d+).*?"
+            r"Type:\s*(?P<type>[A-Za-z]+).*?"
+            r"Bounding Box:\s*top=\s*(?P<top>[-\d.]+),\s*bottom=\s*(?P<bottom>[-\d.]+),\s*left=\s*(?P<left>[-\d.]+),\s*right=\s*(?P<right>[-\d.]+)",
             block,
             re.DOTALL,
         ):
@@ -50,8 +50,8 @@ def parse_output_txt(file_path: Path):
 def animate(frames):
     """Animate frames using matplotlib."""
     fig, ax = plt.subplots(figsize=(8, 6))
-    ax.set_xlim(-1.2, 1.2)
-    ax.set_ylim(0, 1.2)
+    ax.set_xlim(-1, 2)
+    ax.set_ylim(-1, 2)
     ax.set_xlabel("X position (normalized)")
     ax.set_ylabel("Y position (normalized)")
     ax.set_title("Object Movement Simulation")
@@ -59,20 +59,28 @@ def animate(frames):
 
     def update(frame_idx):
         ax.clear()
-        ax.set_xlim(-1.2, 1.2)
-        ax.set_ylim(-0.2, 1.2)
+        ax.set_xlim(-1, 2)
+        ax.set_ylim(-1, 2)
         ax.set_title(f"Frame {frame_idx + 1}/{len(frames)}")
         colors, xs, ys = [], [], []
 
         for obj in frames[frame_idx]:
             xs.append(obj["x"])
             ys.append(obj["y"])
-            colors.append("red" if obj["type"].lower() == "car" else "blue")
+            ## colors.append("red" if obj["type"].lower() == "car" else if obj["type"].lower() == "person" else "blue") e
+            if obj["type"].lower() == "car":
+                colors.append("red")
+            elif obj["type"].lower() == "person":
+                colors.append("green")
+            elif obj["type"].lower() == "truck":
+                colors.append("orange")
+            elif obj["type"].lower() == "bus":
+                colors.append("yellow")
 
         ax.scatter(xs, ys, c=colors, s=80)
         return scat,
 
-    anim = FuncAnimation(fig, update, frames=len(frames), interval=500, repeat=False)
+    anim = FuncAnimation(fig, update, frames=len(frames), interval=100, repeat=False)
     plt.show()
 
 
