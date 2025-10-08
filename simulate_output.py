@@ -2,7 +2,7 @@
 """
 simulate_output.py
 Reads parsed_output.txt from /outputs and animates the detected objects
-(frame-by-frame) using matplotlib.
+(frame-by-frame) using matplotlib — now with background roads!
 """
 
 import re
@@ -10,6 +10,7 @@ import time
 import matplotlib.pyplot as plt
 from pathlib import Path
 from matplotlib.animation import FuncAnimation
+import matplotlib.patches as patches
 
 
 def parse_output_txt(file_path: Path):
@@ -22,7 +23,6 @@ def parse_output_txt(file_path: Path):
     frames = []
 
     for block in frame_blocks[1:]:
-        # Each frame -> list of objects with type + position
         objects = []
         for match in re.finditer(
             r"🧩 Object ID:\s*(?P<id>\d+).*?"
@@ -37,47 +37,61 @@ def parse_output_txt(file_path: Path):
             top = float(match.group("top"))
             bottom = float(match.group("bottom"))
 
-            # center of bounding box
             x = (left + right) / 2
             y = (top + bottom) / 2
             objects.append({"type": obj_type, "x": x, "y": y})
 
         frames.append(objects)
-
     return frames
+
+
+def draw_roads(ax):
+    """Draw two diagonal roads labeled Foothill and Santa Rosa."""
+    # Foothill: top-left → bottom-right
+    ax.plot([-0.6, 1.2], [1.1, -0.3], color="gray", linewidth=15, alpha=0.4, zorder=0)
+    ax.text(0.6, 0.1, "Foothill Blvd", color="black", fontsize=10,
+            rotation=-40, ha="center", va="center", alpha=0.8)
+
+    # Santa Rosa: bottom-left → top-right
+    ax.plot([-0.6, 1.2], [-0.3, 1.1], color="gray", linewidth=15, alpha=0.4, zorder=0)
+    ax.text(0.4, 0.9, "Santa Rosa St", color="black", fontsize=10,
+            rotation=40, ha="center", va="center", alpha=0.8)
 
 
 def animate(frames):
     """Animate frames using matplotlib."""
     fig, ax = plt.subplots(figsize=(8, 6))
-    ax.set_xlim(-1, 2)
-    ax.set_ylim(-1, 2)
+    ax.set_xlim(-0.5, 1.0)
+    ax.set_ylim(0.0, 1.0)
     ax.set_xlabel("X position (normalized)")
     ax.set_ylabel("Y position (normalized)")
-    ax.set_title("Object Movement Simulation")
+    ax.set_title("Foothill & Santa Rosa Intersection")
     scat = ax.scatter([], [])
 
     def update(frame_idx):
         ax.clear()
-        ax.set_xlim(-1, 2)
-        ax.set_ylim(-1, 2)
-        ax.set_title(f"Frame {frame_idx + 1}/{len(frames)}")
-        colors, xs, ys = [], [], []
+        ax.set_xlim(-0.5, 1.0)
+        ax.set_ylim(0.0, 1.0)
+        ax.set_title(f"Frame {frame_idx + 1}/{len(frames)} | Foothill x Santa Rosa")
+        draw_roads(ax)
 
+        xs, ys, colors = [], [], []
         for obj in frames[frame_idx]:
             xs.append(obj["x"])
             ys.append(obj["y"])
-            ## colors.append("red" if obj["type"].lower() == "car" else if obj["type"].lower() == "person" else "blue") e
-            if obj["type"].lower() == "car":
+            t = obj["type"].lower()
+            if t == "car":
                 colors.append("red")
-            elif obj["type"].lower() == "person":
+            elif t == "person":
                 colors.append("green")
-            elif obj["type"].lower() == "truck":
+            elif t == "truck":
                 colors.append("orange")
-            elif obj["type"].lower() == "bus":
+            elif t == "bus":
                 colors.append("yellow")
+            else:
+                colors.append("blue")
 
-        ax.scatter(xs, ys, c=colors, s=80)
+        ax.scatter(xs, ys, c=colors, s=80, edgecolors="black")
         return scat,
 
     anim = FuncAnimation(fig, update, frames=len(frames), interval=100, repeat=False)
@@ -86,7 +100,7 @@ def animate(frames):
 
 def main():
     out_dir = Path("outputs")
-    latest = sorted(out_dir.glob("output*.txt"))[-1]  # use latest run
+    latest = sorted(out_dir.glob("output*.txt"))[-1]
     print(f"🎬 Simulating from: {latest}")
 
     frames = parse_output_txt(latest)
