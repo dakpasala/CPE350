@@ -5,56 +5,83 @@ Reads parsed_output.txt from /outputs and animates the detected objects
 (frame-by-frame) using matplotlib — now with background roads!
 """
 
-import re
+import json
 import time
 import matplotlib.pyplot as plt
 from pathlib import Path
 from matplotlib.animation import FuncAnimation
-import matplotlib.patches as patches
+from matplotlib.widgets import Button, Slider
+from mpl_toolkits.mplot3d import Axes3D
 
-
-def parse_output_txt(file_path: Path):
-    """Parse the output text and return list of frames (each a list of objects)."""
+def load_frames_from_json(file_path: Path):
+    """Read frames from a structured JSON file."""
     with open(file_path, "r", encoding="utf-8") as f:
-        text = f.read()
+        frames = json.load(f)
 
-    # Split by frames
-    frame_blocks = re.split(r"🕒 Frame #[0-9]+ \| Time:", text)
-    frames = []
-
-    for block in frame_blocks[1:]:
-        objects = []
-        for match in re.finditer(
-            r"🧩 Object ID:\s*(?P<id>\d+).*?"
-            r"Type:\s*(?P<type>[A-Za-z]+).*?"
-            r"Bounding Box:\s*top=\s*(?P<top>[-\d.]+),\s*bottom=\s*(?P<bottom>[-\d.]+),\s*left=\s*(?P<left>[-\d.]+),\s*right=\s*(?P<right>[-\d.]+)",
-            block,
-            re.DOTALL,
-        ):
-            obj_type = match.group("type")
-            left = float(match.group("left"))
-            right = float(match.group("right"))
-            top = float(match.group("top"))
-            bottom = float(match.group("bottom"))
-
-            x = (left + right) / 2
-            y = (top + bottom) / 2
-            objects.append({"type": obj_type, "x": x, "y": y})
-
-        frames.append(objects)
+    # Normalize coordinates (if lat/lon or bounding boxes exist)
+    for frame in frames:
+        for obj in frame:
+            # Some objects might only have lat/lon, others x/y
+            if "lon" in obj and "lat" in obj and obj["lon"] is not None and obj["lat"] is not None:
+                # Normalize to roughly 0–1
+                obj["x"] = (obj["lon"] - min_lon) / (max_lon - min_lon) if (max_lon := 1.0) and (min_lon := 0.0) else 0.5
+                obj["y"] = (obj["lat"] - min_lat) / (max_lat - min_lat) if (max_lat := 1.0) and (min_lat := 0.0) else 0.5
+            elif "x" not in obj or "y" not in obj:
+                obj["x"], obj["y"] = 0.5, 0.5
     return frames
 
+# def parse_output_txt(file_path: Path):
+#     """Parse the output text and return list of frames (each a list of objects)."""
+#     with open(file_path, "r", encoding="utf-8") as f:
+#         text = f.read()
+
+#     # Split by frames
+#     frame_blocks = re.split(r"🕒 Frame #[0-9]+ \| Time:", text)
+#     frames = []
+
+#     for block in frame_blocks[1:]:
+#         objects = []
+#         for match in re.finditer(
+#             r"🧩 Object ID:\s*(?P<id>\d+).*?"
+#             r"Type:\s*(?P<type>[A-Za-z]+).*?"
+#             r"Bounding Box:\s*top=\s*(?P<top>[-\d.]+),\s*bottom=\s*(?P<bottom>[-\d.]+),\s*left=\s*(?P<left>[-\d.]+),\s*right=\s*(?P<right>[-\d.]+)",
+#             block,
+#             re.DOTALL,
+#         ):
+#             obj_type = match.group("type")
+#             left = float(match.group("left"))
+#             right = float(match.group("right"))
+#             top = float(match.group("top"))
+#             bottom = float(match.group("bottom"))
+
+#             x = (left + right) / 2
+#             y = (top + bottom) / 2
+#             objects.append({"type": obj_type, "x": x, "y": y})
+
+#         frames.append(objects)
+#     return frames
+
+
+# def draw_roads(ax):
+#     """Draw two diagonal roads labeled Foothill and Santa Rosa."""
+#     # Foothill: top-left → bottom-right
+#     ax.plot([-0.6, 1.2], [1.1, -0.3], color="gray", linewidth=15, alpha=0.4, zorder=0)
+#     ax.text(0.6, 0.1, "Foothill Blvd", color="black", fontsize=10,
+#             rotation=-40, ha="center", va="center", alpha=0.8)
+
+#     # Santa Rosa: bottom-left → top-right
+#     ax.plot([-0.6, 1.2], [-0.3, 1.1], color="gray", linewidth=15, alpha=0.4, zorder=0)
+#     ax.text(0.4, 0.9, "Santa Rosa St", color="black", fontsize=10,
+#             rotation=40, ha="center", va="center", alpha=0.8)
 
 def draw_roads(ax):
-    """Draw two diagonal roads labeled Foothill and Santa Rosa."""
-    # Foothill: top-left → bottom-right
-    ax.plot([-0.6, 1.2], [1.1, -0.3], color="gray", linewidth=15, alpha=0.4, zorder=0)
-    ax.text(0.6, 0.1, "Foothill Blvd", color="black", fontsize=10,
+    """Draw 3D roads flat at z=0."""
+    ax.plot([-0.6, 1.2], [1.1, -0.3], zs=0, color="gray", linewidth=15, alpha=0.4)
+    ax.text(0.6, 0.1, 0.01, "Foothill Blvd", color="black", fontsize=10,
             rotation=-40, ha="center", va="center", alpha=0.8)
 
-    # Santa Rosa: bottom-left → top-right
-    ax.plot([-0.6, 1.2], [-0.3, 1.1], color="gray", linewidth=15, alpha=0.4, zorder=0)
-    ax.text(0.4, 0.9, "Santa Rosa St", color="black", fontsize=10,
+    ax.plot([-0.6, 1.2], [-0.3, 1.1], zs=0, color="gray", linewidth=15, alpha=0.4)
+    ax.text(0.4, 0.9, 0.01, "Santa Rosa St", color="black", fontsize=10,
             rotation=40, ha="center", va="center", alpha=0.8)
 
 
@@ -97,16 +124,92 @@ def animate(frames):
     anim = FuncAnimation(fig, update, frames=len(frames), interval=100, repeat=False)
     plt.show()
 
+def animate_with_controls(frames):
+    fig = plt.figure(figsize=(8, 6))
+    ax = fig.add_subplot(111, projection="3d")
+    plt.subplots_adjust(bottom=0.25)  # space for buttons + slider
+
+    is_paused = False
+    current_frame = {"idx": 0}
+
+    def draw_frame(idx):
+        ax.clear()
+        ax.set_xlim(-0.5, 1.0)
+        ax.set_ylim(0.0, 1.0)
+        ax.set_zlim(-0.1, 0.1)
+        ax.set_title(f"Frame {idx + 1}/{len(frames)} | Foothill x Santa Rosa")
+        ax.set_xlabel("X position (normalized)")
+        ax.set_ylabel("Y position (normalized)")
+        ax.set_zlabel("Z (flat plane)")
+        draw_roads(ax)
+
+        xs, ys, zs, colors = [], [], [], []
+        for obj in frames[idx]:
+            xs.append(obj.get("x", 0.5))
+            ys.append(obj.get("y", 0.5))
+            zs.append(0)
+            t = obj.get("type", "").lower()
+            colors.append({
+                "car": "red",
+                "person": "green",
+                "truck": "orange",
+                "bus": "yellow"
+            }.get(t, "blue"))
+
+        ax.scatter(xs, ys, zs, c=colors, s=80, edgecolors="black")
+        ax.view_init(elev=85, azim=-90)
+        ax.grid(True, linestyle="--", alpha=0.3)
+
+    draw_frame(0)
+
+    # Buttons + slider
+    ax_play = plt.axes([0.35, 0.05, 0.1, 0.06])
+    ax_pause = plt.axes([0.47, 0.05, 0.1, 0.06])
+    ax_slider = plt.axes([0.1, 0.15, 0.8, 0.03])
+
+    btn_play = Button(ax_play, "▶️ Play")
+    btn_pause = Button(ax_pause, "⏸ Pause")
+    slider = Slider(ax_slider, "Frame", 1, len(frames), valinit=1, valfmt="%0.0f")
+
+    def play(_):
+        nonlocal is_paused
+        is_paused = False
+
+    def pause(_):
+        nonlocal is_paused
+        is_paused = True
+
+    btn_play.on_clicked(play)
+    btn_pause.on_clicked(pause)
+
+    def on_slider_change(val):
+        idx = int(slider.val) - 1
+        current_frame["idx"] = idx
+        draw_frame(idx)
+        fig.canvas.draw_idle()
+
+    slider.on_changed(on_slider_change)
+
+    def update(_):
+        if is_paused:
+            return
+        idx = current_frame["idx"]
+        draw_frame(idx)
+        current_frame["idx"] = (idx + 1) % len(frames)
+        slider.set_val(current_frame["idx"] + 1)
+
+    FuncAnimation(fig, update, interval=100, repeat=True)
+    plt.show()
 
 def main():
     out_dir = Path("outputs")
-    latest = sorted(out_dir.glob("output*.txt"))[-1]
-    print(f"🎬 Simulating from: {latest}")
+    latest_json = sorted(out_dir.glob("output*.json"))[-1]
+    print(f"🎬 Simulating from: {latest_json}")
 
-    frames = parse_output_txt(latest)
-    print(f"✅ Parsed {len(frames)} frames.")
+    frames = load_frames_from_json(latest_json)
+    print(f"✅ Loaded {len(frames)} frames from JSON.")
     time.sleep(1)
-    animate(frames)
+    animate_with_controls(frames)
 
 
 if __name__ == "__main__":
