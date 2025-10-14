@@ -7,6 +7,7 @@ to sequentially numbered text files inside the /outputs directory.
 """
 
 import re
+import json
 from lxml import etree
 from pathlib import Path
 from textwrap import indent
@@ -119,6 +120,32 @@ def parse_xml(file_path: str):
         out.write("\n" + "=" * 90 + "\n")
 
     print(f"✅ Done! Output saved to: {output_file.resolve()}")
+    
+    json_file = output_file.with_suffix(".json")
+    all_frames = []
+
+    for frame_xml in frames:
+        parser = etree.XMLParser(recover=True)
+        frame = etree.fromstring(frame_xml.encode("utf-8"), parser)
+        objects = frame.findall("Object")
+        frame_data = []
+        for obj in objects:
+            obj_type = obj.findtext(".//Class/Type", default="Unknown")
+            geo = obj.find(".//GeoLocation")
+            lat = float(geo.get("lat")) if geo is not None else None
+            lon = float(geo.get("lon")) if geo is not None else None
+            frame_data.append({
+                "type": obj_type,
+                "lat": lat,
+                "lon": lon
+            })
+        all_frames.append(frame_data)
+
+    with open(json_file, "w", encoding="utf-8") as jf:
+        json.dump(all_frames, jf, indent=2)
+
+    print(f"🪶 Also saved structured data to: {json_file}")
+
 
 
 if __name__ == "__main__":
