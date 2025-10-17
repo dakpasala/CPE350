@@ -105,7 +105,7 @@ def parse_element(event, elem):
             pass
     
 
-command = f'ffmpeg -i "oldstuff/output1.xml" -map 0:d -c copy -copy_unknown -loglevel fatal -f data -'
+command = f'ffmpeg -i "../oldstuff/output1.xml" -map 0:d -c copy -copy_unknown -loglevel fatal -f data -'
 with subprocess.Popen(
     command, stdout=subprocess.PIPE, shell=True
 ) as process:
