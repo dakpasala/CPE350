@@ -1,0 +1,5 @@
+*.config
+*.db
+*.ini
+*.pyc
+log.txt

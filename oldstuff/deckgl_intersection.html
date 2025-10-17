@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta http-equiv="content-type" content="text/html; charset=UTF-8" />
+    <title>pydeck</title>
+        <script src="https://api.tiles.mapbox.com/mapbox-gl-js/v1.13.0/mapbox-gl.js"></script>
+        <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.2.0/css/bootstrap-theme.min.css" />
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/font-awesome/4.6.3/css/font-awesome.min.css" />
+    <script src='https://cdn.jsdelivr.net/npm/@deck.gl/jupyter-widget@~9.0.*/dist/index.js'></script>
+    <style>
+    body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+#deck-container {
+  width: 100vw;
+  height: 100vh;
+}
+
+#deck-container canvas {
+  z-index: 1;
+  background: none;
+}
+    </style>
+  </head>
+  <body>
+    <div id="deck-container">
+    </div>
+  </body>
+  <script>
+    const container = document.getElementById('deck-container');
+    const jsonInput = {
+  "initialViewState": {
+    "bearing": 30,
+    "latitude": 0,
+    "longitude": 0,
+    "pitch": 45,
+    "zoom": 1.8
+  },
+  "layers": [
+    {
+      "@@type": "PathLayer",
+      "data": [
+        {
+          "name": "Foothill Blvd",
+          "path": [
+            [
+              -0.6,
+              1.1
+            ],
+            [
+              1.2,
+              -0.3
+            ]
+          ]
+        },
+        {
+          "name": "Santa Rosa St",
+          "path": [
+            [
+              -0.6,
+              -0.3
+            ],
+            [
+              1.2,
+              1.1
+            ]
+          ]
+        }
+      ],
+      "getColor": [
+        100,
+        100,
+        100
+      ],
+      "getPath": "@@=path",
+      "id": "186a7077-0f1f-4b17-a8dc-21e41869a55e",
+      "opacity": 0.4,
+      "widthMinPixels": 5,
+      "widthScale": 30
+    },
+    {
+      "@@type": "ScatterplotLayer",
+      "data": [
+        {
+          "color": [
+            255,
+            0,
+            0
+          ],
+          "type": "Car",
+          "x": 0.33999999999999997,
+          "y": 0.75,
+          "z": 0
+        },
+        {
+          "color": [
+            255,
+            0,
+            0
+          ],
+          "type": "Car",
+          "x": 0.275,
+          "y": 0.79,
+          "z": 0
+        },
+        {
+          "color": [
+            0,
+            255,
+            0
+          ],
+          "type": "Person",
+          "x": -0.74,
+          "y": 0.8600000000000001,
+          "z": 0
+        },
+        {
+          "color": [
+            255,
+            0,
+            0
+          ],
+          "type": "Car",
+          "x": 0.47,
+          "y": 0.16,
+          "z": 0
+        },
+        {
+          "color": [
+            255,
+            0,
+            0
+          ],
+          "type": "Car",
+          "x": 0.675,
+          "y": 0.44500000000000006,
+          "z": 0
+        },
+        {
+          "color": [
+            255,
+            0,
+            0
+          ],
+          "type": "Car",
+          "x": 0.99,
+          "y": 0.595,
+          "z": 0
+        },
+        {
+          "color": [
+            255,
+            0,
+            0
+          ],
+          "type": "Car",
+          "x": 0.8400000000000001,
+          "y": 0.8300000000000001,
+          "z": 0
+        },
+        {
+          "color": [
+            255,
+            0,
+            0
+          ],
+          "type": "Car",
+          "x": -0.325,
+          "y": 0.875,
+          "z": 0
+        },
+        {
+          "color": [
+            255,
+            0,
+            0
+          ],
+          "type": "Car",
+          "x": 0.515,
+          "y": 0.835,
+          "z": 0
+        },
+        {
+          "color": [
+            255,
+            0,
+            0
+          ],
+          "type": "Car",
+          "x": -0.275,
+          "y": 0.32,
+          "z": 0
+        },
+        {
+          "color": [
+            255,
+            0,
+            0
+          ],
+          "type": "Car",
+          "x": -0.63,
+          "y": 0.845,
+          "z": 0
+        },
+        {
+          "color": [
+            255,
+            0,
+            0
+          ],
+          "type": "Car",
+          "x": 0.6499999999999999,
+          "y": 0.81,
+          "z": 0
+        },
+        {
+          "color": [
+            255,
+            0,
+            0
+          ],
+          "type": "Car",
+          "x": 0.98,
+          "y": 0.87,
+          "z": 0
+        },
+        {
+          "color": [
+            255,
+            0,
+            0
+          ],
+          "type": "Car",
+          "x": -0.475,
+          "y": 0.985,
+          "z": 0
+        },
+        {
+          "color": [
+            255,
+            0,
+            0
+          ],
+          "type": "Car",
+          "x": 0.39,
+          "y": 0.815,
+          "z": 0
+        },
+        {
+          "color": [
+            255,
+            0,
+            0
+          ],
+          "type": "Car",
+          "x": 0.51,
+          "y": 0.79,
+          "z": 0
+        },
+        {
+          "color": [
+            255,
+            0,
+            0
+          ],
+          "type": "Car",
+          "x": -0.21500000000000002,
+          "y": 0.88,
+          "z": 0
+        },
+        {
+          "color": [
+            255,
+            0,
+            0
+          ],
+          "type": "Car",
+          "x": 0.74,
+          "y": 0.8049999999999999,
+          "z": 0
+        },
+        {
+          "color": [
+            255,
+            0,
+            0
+          ],
+          "type": "Car",
+          "x": 0.655,
+          "y": 0.86,
+          "z": 0
+        },
+        {
+          "color": [
+            255,
+            0,
+            0
+          ],
+          "type": "Car",
+          "x": -0.96,
+          "y": 0.78,
+          "z": 0
+        },
+        {
+          "color": [
+            255,
+            0,
+            0
+          ],
+          "type": "Car",
+          "x": 0.245,
+          "y": 0.765,
+          "z": 0
+        },
+        {
+          "color": [
+            255,
+            0,
+            0
+          ],
+          "type": "Car",
+          "x": -0.935,
+          "y": 0.81,
+          "z": 0
+        },
+        {
+          "color": [
+            255,
+            0,
+            0
+          ],
+          "type": "Car",
+          "x": -0.38,
+          "y": 0.855,
+          "z": 0
+        },
+        {
+          "color": [
+            255,
+            0,
+            0
+          ],
+          "type": "Car",
+          "x": -0.8899999999999999,
+          "y": 0.8500000000000001,
+          "z": 0
+        }
+      ],
+      "getColor": "@@=color",
+      "getPosition": "@@=[x, y, z]",
+      "getRadius": 0.01,
+      "id": "16e486e4-91cf-451b-a95e-150717a32867",
+      "pickable": true
+    }
+  ],
+  "mapProvider": "carto",
+  "views": [
+    {
+      "@@type": "MapView",
+      "controller": true
+    }
+  ]
+};
+    const tooltip = {'text': '{type}'};
+    const customLibraries = null;
+    const configuration = null;
+
+    const deckInstance = createDeck({
+                  container,
+      jsonInput,
+      tooltip,
+      customLibraries,
+      configuration
+    });
+
+  </script>
+</html>

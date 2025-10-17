@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<tt:MetadataStream xmlns:tns1="http://www.onvif.org/ver10/topics"
+    xmlns:tt="http://www.onvif.org/ver10/schema" xmlns:wsnt="http://docs.oasis-open.org/wsn/b-2">
+    <tt:Event>
+        <wsnt:NotificationMessage>
+            <wsnt:Topic Dialect="http://www.onvif.org/ver10/tev/topicExpression/ConcreteSet">
+                tns1:VideoSource/MotionAlarm</wsnt:Topic>
+            <wsnt:Message>
+                <tt:Message PropertyOperation="Changed" UtcTime="2025-08-28T15:10:53.064Z">
+                    <tt:Source>
+                        <tt:SimpleItem Name="Source" Value="1" />
+                    </tt:Source>
+                    <tt:Data>
+                        <tt:SimpleItem Name="State" Value="false" />
+                    </tt:Data>
+                </tt:Message>
+            </wsnt:Message>
+        </wsnt:NotificationMessage>
+        <wsnt:NotificationMessage>
+            <wsnt:Topic Dialect="http://www.onvif.org/ver10/tev/topicExpression/ConcreteSet">
+                tns1:IVA/ObjectInField/Detect_any_object</wsnt:Topic>
+            <wsnt:Message>
+                <tt:Message PropertyOperation="Changed" UtcTime="2025-08-28T15:10:53.064Z">
+                    <tt:Source>
+                        <tt:SimpleItem Name="Source" Value="1" />
+                    </tt:Source>
+                    <tt:Key>
+                        <tt:SimpleItem Name="ObjectID" Value="3609607" />
+                    </tt:Key>
+                    <tt:Data>
+                        <tt:SimpleItem Name="State" Value="false" />
+                    </tt:Data>
+                </tt:Message>
+            </wsnt:Message>
+        </wsnt:NotificationMessage>
+        <wsnt:NotificationMessage>
+            <wsnt:Topic Dialect="http://www.onvif.org/ver10/tev/topicExpression/ConcreteSet">
+                tns1:RuleEngine/FieldDetector/ObjectsInside</wsnt:Topic>
+            <wsnt:Message>
+                <tt:Message PropertyOperation="Changed" UtcTime="2025-08-28T15:10:53.064Z">
+                    <tt:Source>
+                        <tt:SimpleItem Name="VideoSource" Value="1" />
+                        <tt:SimpleItem Name="Rule" Value="Detect_any_object" />
+                    </tt:Source>
+                    <tt:Data>
+                        <tt:SimpleItem Name="IsInside" Value="false" />
+                        <tt:SimpleItem Name="ObjectID" Value="3609607" />
+                    </tt:Data>
+                </tt:Message>
+            </wsnt:Message>
+        </wsnt:NotificationMessage>
+    </tt:Event>
+</tt:MetadataStream>
