@@ -1,88 +1,105 @@
 #!/usr/bin/env python3
 """
 incident_detection.py
-Performs unsupervised anomaly detection on combined vehicle statistics.
-Uses IsolationForest to flag potentially abnormal movements or near-incidents.
+Frame-by-frame anomaly detection with persistent live plot.
+Now scales per location (Foothill, Dunbarton, etc.) so data doesn't flatten,
+and keeps fixed axis ranges for each location.
 """
 
 import pandas as pd
 import numpy as np
 from sklearn.ensemble import IsolationForest
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
 import matplotlib.pyplot as plt
 import os
+import time
 
 # -------------------------------------------------------
-# 1. Load data
+# 1. Load expanded dataset
 # -------------------------------------------------------
-def load_data(csv_path="combined_vehicle_stats.csv"):
+def load_data(csv_path="combined_vehicle_stats_expanded.csv"):
     if not os.path.exists(csv_path):
         raise FileNotFoundError(f"CSV not found: {csv_path}")
     df = pd.read_csv(csv_path)
+    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+    df = df.sort_values("timestamp")
     print(f"✅ Loaded {len(df)} records from {csv_path}")
     return df
 
 # -------------------------------------------------------
-# 2. Prepare features for the model
+# 2. Compute per-location scaling (0–1)
 # -------------------------------------------------------
-def prepare_features(df):
-    # choose numeric features likely to reflect anomalies
-    features = ["speed", "x", "y", "time_elapsed"]
-    # handle missing data
-    df[features] = df[features].fillna(0)
-    X = df[features].values
+def scale_per_location(df):
+    scaled = []
+    bounds = {}
+    for loc, group in df.groupby("location"):
+        lat_min, lat_max = group["lat"].min(), group["lat"].max()
+        lon_min, lon_max = group["lon"].min(), group["lon"].max()
 
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-    return X_scaled, features
+        df.loc[group.index, "lat_scaled"] = (group["lat"] - lat_min) / (lat_max - lat_min)
+        df.loc[group.index, "lon_scaled"] = (group["lon"] - lon_min) / (lon_max - lon_min)
 
-# -------------------------------------------------------
-# 3. Run IsolationForest
-# -------------------------------------------------------
-def detect_anomalies(df, X_scaled, contamination=0.05):
-    model = IsolationForest(
-        n_estimators=200,
-        contamination=contamination,
-        random_state=42,
-        bootstrap=True,
-        n_jobs=-1
-    )
-    # 🔧 fit the model first!
-    model.fit(X_scaled)
-
-    # then compute anomaly scores + labels
-    df["anomaly_score"] = model.decision_function(X_scaled)
-    df["is_anomaly"] = model.predict(X_scaled)  # -1 = anomaly, 1 = normal
-    return df, model
+        bounds[loc] = (lon_min, lon_max, lat_min, lat_max)
+        print(f"📍 {loc}: lat({lat_min:.6f}–{lat_max:.6f}), lon({lon_min:.6f}–{lon_max:.6f})")
+    return df, bounds
 
 # -------------------------------------------------------
-# 4. Visualize anomalies (optional)
+# 3. Frame-by-frame anomaly detection and live visualization
 # -------------------------------------------------------
-def visualize(df):
-    plt.figure(figsize=(8,6))
-    colors = np.where(df["is_anomaly"] == -1, "red", "blue")
-    plt.scatter(df["x"], df["y"], c=colors, alpha=0.6, s=30)
-    plt.xlabel("X position")
-    plt.ylabel("Y position")
-    plt.title("Detected Vehicle Anomalies (red = anomaly)")
-    plt.grid(True)
-    plt.tight_layout()
-    plt.show()
+def detect_and_visualize(df, bounds, contamination=0.03):
+    timestamps = sorted(df["timestamp"].dropna().unique())
+    print(f"\n🕒 Processing {len(timestamps)} frames...\n")
+
+    for loc, group in df.groupby("location"):
+        print(f"\n🌍 Location: {loc}")
+        loc_bounds = bounds[loc]
+        subset = group.copy()
+
+        plt.ion()
+        fig, ax = plt.subplots(figsize=(7, 6))
+        ax.set_title(f"Live Anomaly Detection — {loc} (red = anomaly)")
+        ax.set_xlabel("Longitude (scaled)")
+        ax.set_ylabel("Latitude (scaled)")
+        ax.grid(True)
+        ax.set_xlim(0, 1)
+        ax.set_ylim(0, 1)
+        scatter = ax.scatter([], [], c=[], alpha=0.7, s=40)
+        text = ax.text(0.02, 0.98, "", transform=ax.transAxes, va="top")
+
+        for t in timestamps:
+            frame = subset[subset["timestamp"] == t].copy()
+            if len(frame) < 5:
+                continue
+
+            X = frame[["speed", "lat_scaled", "lon_scaled"]].fillna(0).values
+            X = StandardScaler().fit_transform(X)
+
+            model = IsolationForest(
+                n_estimators=200,
+                contamination=contamination,
+                random_state=42,
+                n_jobs=-1
+            ).fit(X)
+
+            frame["anomaly_score"] = model.decision_function(X)
+            frame["is_anomaly"] = model.predict(X)
+            num_anom = (frame["is_anomaly"] == -1).sum()
+
+            # Update live plot
+            text.set_text(f"Timestamp: {t}\nAnomalies: {num_anom}/{len(frame)}")
+            colors = np.where(frame["is_anomaly"] == -1, "red", "blue")
+            scatter.set_offsets(np.c_[frame["lon_scaled"], frame["lat_scaled"]])
+            scatter.set_color(colors)
+
+            plt.pause(0.5)
+
+        plt.ioff()
+        plt.show()
 
 # -------------------------------------------------------
-# 5. Save results
-# -------------------------------------------------------
-def save_results(df, out_csv="vehicle_anomaly_scores.csv"):
-    df.to_csv(out_csv, index=False)
-    print(f"💾 Saved anomaly results → {out_csv}")
-    print(f"🚨 {sum(df['is_anomaly']==-1)} anomalies detected")
-
-# -------------------------------------------------------
-# 6. Main pipeline
+# 4. Run pipeline
 # -------------------------------------------------------
 if __name__ == "__main__":
     df = load_data()
-    X_scaled, features = prepare_features(df)
-    df, model = detect_anomalies(df, X_scaled, contamination=0.05)
-    save_results(df)
-    visualize(df)
+    df, bounds = scale_per_location(df)
+    detect_and_visualize(df, bounds, contamination=0.03)

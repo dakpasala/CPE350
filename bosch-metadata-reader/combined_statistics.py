@@ -1,25 +1,26 @@
 #!/usr/bin/env python3
 """
 combined_statistics.py
-Aggregates key vehicle statistics from MongoDB using the same configuration
-as the main metadata pipeline, now extended to include (x, y) coordinates
-for future near-accident analysis.
+Expands each vehicle's mapPath points into individual rows.
+Each mapPath[i] entry (lat, lon) becomes its own row with same vehicle metadata.
+Output is sorted by timestamp ascending for time-series analysis.
 """
 
 import pymongo
 import configparser
 import pandas as pd
-import numpy as np  # added for optional placeholder coordinates
+import numpy as np
+from bson import ObjectId
 
 # -------------------------------------------------------
-# 1. Load same MongoDB connection as mongointerface.py
+# 1. Load MongoDB connection
 # -------------------------------------------------------
 config = configparser.ConfigParser()
 config.read("connection.ini")
 dbUrl = config["DEFAULT"]["database"]
 
 client = pymongo.MongoClient(dbUrl)
-db = client["camera-counts"]  # same as in mongointerface.py
+db = client["camera-counts"]
 vehicleCollection = db["vehicles"]
 
 # -------------------------------------------------------
@@ -31,12 +32,13 @@ def fetch_vehicle_data():
     return data
 
 # -------------------------------------------------------
-# 3. Convert to DataFrame (added x/y logic)
+# 3. Expand mapPath into multiple rows per vehicle
 # -------------------------------------------------------
-def process_vehicle_data(data):
+def expand_map_paths(data):
     rows = []
     for doc in data:
-        row = {
+        base = {
+            "object_id": str(doc.get("_id")),
             "timestamp": doc.get("timestamp"),
             "location": doc.get("location"),
             "detected_type": doc.get("detected_type"),
@@ -46,31 +48,26 @@ def process_vehicle_data(data):
             "time_elapsed": doc.get("time_elapsed"),
         }
 
-        # Include lat/lon if available
-        if "lat" in doc:
-            row["lat"] = doc["lat"]
+        map_path = doc.get("mapPath", [])
+        if isinstance(map_path, list) and len(map_path) > 0:
+            for i, coords in enumerate(map_path):
+                if isinstance(coords, (list, tuple)) and len(coords) == 2:
+                    lat, lon = coords
+                    row = base.copy()
+                    row["path_index"] = i
+                    row["lat"] = lat
+                    row["lon"] = lon
+                    row["x"] = lon
+                    row["y"] = lat
+                    rows.append(row)
         else:
+            row = base.copy()
+            row["path_index"] = np.nan
             row["lat"] = np.nan
-
-        if "lon" in doc:
-            row["lon"] = doc["lon"]
-        else:
             row["lon"] = np.nan
-
-        # -------------------------------------------------------
-        # 🔵 Add derived X/Y coordinates for future analytics
-        # -------------------------------------------------------
-        # If lat/lon exist, temporarily use them as X/Y placeholders.
-        # Later, when real Cartesian coordinates are added to the DB,
-        # this section will automatically populate true positions.
-        if not pd.isna(row["lat"]) and not pd.isna(row["lon"]):
-            row["x"] = row["lon"]
-            row["y"] = row["lat"]
-        else:
             row["x"] = np.nan
             row["y"] = np.nan
-
-        rows.append(row)
+            rows.append(row)
 
     return pd.DataFrame(rows)
 
@@ -78,28 +75,29 @@ def process_vehicle_data(data):
 # 4. Compute derived metrics
 # -------------------------------------------------------
 def compute_metrics(df):
-    df["speed_mph"] = df["speed"]  # already converted in ffmpegreader
+    df["speed_mph"] = df["speed"]
     df["is_confident"] = df["certainty"].fillna(0) > 0.5
-
-    # 🔵 Optional: generate placeholder XY if DB has none
-    if df["x"].isna().all() or df["y"].isna().all():
-        np.random.seed(42)
-        df["x"] = np.random.uniform(0, 100, len(df))
-        df["y"] = np.random.uniform(0, 100, len(df))
-        print("⚠️ No coordinates found in DB — generated random (x, y) placeholders.")
-
     return df
 
 # -------------------------------------------------------
-# 5. Run aggregation
+# 5. Sort by timestamp ascending
+# -------------------------------------------------------
+def sort_by_time(df):
+    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+    df = df.sort_values(by="timestamp", ascending=True).reset_index(drop=True)
+    return df
+
+# -------------------------------------------------------
+# 6. Run aggregation
 # -------------------------------------------------------
 if __name__ == "__main__":
     data = fetch_vehicle_data()
-    df = process_vehicle_data(data)
+    df = expand_map_paths(data)
     df = compute_metrics(df)
+    df = sort_by_time(df)
 
-    print("\n✅ Combined Statistics Preview:")
+    print("\n✅ Expanded and sorted dataset preview:")
     print(df.head())
 
-    df.to_csv("combined_vehicle_stats.csv", index=False)
-    print("\n💾 Saved to combined_vehicle_stats.csv")
+    df.to_csv("combined_vehicle_stats_expanded.csv", index=False)
+    print("\n💾 Saved expanded data → combined_vehicle_stats_expanded.csv")
