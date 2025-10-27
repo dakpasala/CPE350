@@ -117,7 +117,7 @@ def parse_element(event, elem):
 # -------------------------------------------------------
 # 3. Read and parse XML (direct from file, no ffmpeg)
 # -------------------------------------------------------
-xml_path = "../oldstuff/output1.xml"
+xml_path = "../xmls/output1.xml"
 
 parser = ET.XMLPullParser(['start', 'end'])
 parser.feed('<root>')
