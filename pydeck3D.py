@@ -1,8 +1,35 @@
+import os
+import re
 import pydeck as pdk
 import pandas as pd
 import json
 import time
 from pathlib import Path
+
+MAPBOX_TOKEN = "pk.eyJ1IjoibWNtaWtlMjkiLCJhIjoiY21oOWcxYXl0MG56eDJqcHkxeDl2OWx3dSJ9.xbojrrnBboUk3zq8lxLIuw"
+os.environ["MAPBOX_API_KEY"] = MAPBOX_TOKEN
+pdk.settings.mapbox_api_key = MAPBOX_TOKEN
+
+def patch_html_file(filename, mapbox_token):
+    """Injects Mapbox GL JS, CSS, and access token into a pydeck HTML file."""
+    with open(filename, "r", encoding="utf-8") as f:
+        html = f.read()
+
+    # Inject the CSS, JS, and token before </head>
+    fix_snippet = f"""
+    <!-- ✅ Auto-injected Mapbox fix -->
+    <link href="https://api.mapbox.com/mapbox-gl-js/v2.9.2/mapbox-gl.css" rel="stylesheet" />
+    <script src="https://api.mapbox.com/mapbox-gl-js/v2.9.2/mapbox-gl.js"></script>
+    <script>
+      mapboxgl.accessToken = "{mapbox_token}";
+    </script>
+    """
+
+    if "</head>" in html and "mapboxgl.accessToken" not in html:
+        html = re.sub(r"</head>", fix_snippet + "\n</head>", html)
+
+    with open(filename, "w", encoding="utf-8") as f:
+        f.write(html)
 
 # ---------------------------------------------
 # Load frames (your parsed traffic metadata)
@@ -189,31 +216,13 @@ def make_trips_layer(frames):
         map_style="mapbox://styles/mapbox/dark-v11",
         tooltip={"text": "Type: {type}"},
     )
-
+    print(f"Loaded {len(trip_data)} trip paths")
+    
     # Export to HTML with animation controls
     html_path = "deck_trips.html"
     deck.to_html(html_path, open_browser=True)
+    patch_html_file("deck_trips.html", "pk.eyJ1IjoibWNtaWtlMjkiLCJhIjoiY21nc2N4c2x1MmpydTJrcHllaDM1NGhxayJ9.MX6gzygrD5m2FtfTCKMTPA")
     print(f"✅ Created animated 3D trips map at {html_path}")
-    
-# ---------------------------------------------
-# Create base map and view
-# ---------------------------------------------
-# view_state = pdk.ViewState(
-#     latitude=CENTER["lat"],
-#     longitude=CENTER["lon"],
-#     zoom=17,
-#     pitch=45,
-# )
-
-# ---------------------------------------------
-# Display frames interactively
-# ---------------------------------------------
-# for idx, frame in enumerate(frames):
-#     layer = make_layer_from_frame(frame)
-#     deck = pdk.Deck(layers=[layer], initial_view_state=view_state, map_style="mapbox://styles/mapbox/light-v10")
-#     deck.show()
-#     print(f"Showing frame {idx+1}/{len(frames)}")
-#     time.sleep(1/24)  # simulate ~24 fps
     
 if __name__ == "__main__":
     out_dir = Path("outputs")

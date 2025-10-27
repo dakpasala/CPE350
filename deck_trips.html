@@ -24,7 +24,15 @@
   background: none;
 }
     </style>
-  </head>
+  
+    <!-- ✅ Auto-injected Mapbox fix -->
+    <link href="https://api.mapbox.com/mapbox-gl-js/v2.9.2/mapbox-gl.css" rel="stylesheet" />
+    <script src="https://api.mapbox.com/mapbox-gl-js/v2.9.2/mapbox-gl.js"></script>
+    <script>
+      mapboxgl.accessToken = "pk.eyJ1IjoibWNtaWtlMjkiLCJhIjoiY21nc2N4c2x1MmpydTJrcHllaDM1NGhxayJ9.MX6gzygrD5m2FtfTCKMTPA";
+    </script>
+    
+</head>
   <body>
     <div id="deck-container">
     </div>
@@ -105567,7 +105575,7 @@
       "getColor": "@@=color",
       "getPath": "@@=path",
       "getTimestamps": "@@=timestamps",
-      "id": "a4383139-8800-4b8e-9120-74412b4bc9b4",
+      "id": "56ff7578-f19c-484e-b986-99f65706f2d5",
       "opacity": 0.8,
       "rounded": true,
       "trailLength": 20,
@@ -105588,6 +105596,7 @@
     const configuration = null;
 
     const deckInstance = createDeck({
+            mapboxApiKey: 'pk.eyJ1IjoibWNtaWtlMjkiLCJhIjoiY21oOWcxYXl0MG56eDJqcHkxeDl2OWx3dSJ9.xbojrrnBboUk3zq8lxLIuw',
                   container,
       jsonInput,
       tooltip,
