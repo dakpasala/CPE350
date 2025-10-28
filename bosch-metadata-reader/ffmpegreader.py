@@ -115,45 +115,52 @@ def parse_element(event, elem):
 
 
 # -------------------------------------------------------
-# 3. Read and parse XML (direct from file, no ffmpeg)
+# 3. Read and parse XML (robust stream-safe version)
 # -------------------------------------------------------
-xml_path = "../xmls/output1.xml"
+import os
+from xml.etree import ElementTree as ET
 
+xml_path = "../xmls/output2.xml"
+
+if not os.path.exists(xml_path):
+    raise FileNotFoundError(f"XML file not found: {xml_path}")
+
+# Set up parser and seen-frames tracker
 parser = ET.XMLPullParser(['start', 'end'])
-parser.feed('<root>')
+parser.feed('<root>')  # temp root for recovery
+processed_frames = set()
 
-foundStart = False
-i = 0
+chunk_count = 0
 
-with open(xml_path, "rb") as process:  # same behavior as ffmpeg stdout
-    while True:
-        value = process.read(4096)
-        if not value:
-            break  # EOF
+with open(xml_path, "rb") as process:
+    for chunk in iter(lambda: process.read(4096), b""):
+        chunk_count += 1
 
-        i += 1
+        try:
+            parser.feed(chunk)
 
-        if not foundStart:
-            res = re.search(b"<tt:MetadataStream", value)
-            if res is not None:
-                value = value[res.start():]
-                foundStart = True
-
-        if foundStart:
-            parser.feed(value)
-            if i > 5:  # wait for a few chunks
+            for event, elem in parser.read_events():
                 try:
-                    for event, elem in parser.read_events():
-                        try:
-                            parse_element(event, elem)
-                        except KeyError as ke:
-                            print(f"⚠️ Missing expected attribute {ke} on tag {elem.tag}")
-                        except Exception as e:
-                            print(f"⚠️ parse_element error: {e}")
-                        elem.clear()
+                    parse_element(event, elem)
+
+                    # Deduplicate by timestamp — avoids re-inserting same frame
+                    if timestamp and timestamp in processed_frames:
+                        continue
+                    if timestamp:
+                        processed_frames.add(timestamp)
+
+                except KeyError as ke:
+                    print(f"⚠️ Missing expected attribute {ke} on tag {elem.tag}")
                 except Exception as e:
-                    print("XML parsing error, resetting parser:", e)
-                    i = 0
-                    foundStart = False
-                    parser = ET.XMLPullParser(['start', 'end'])
-                    parser.feed('<root>')
+                    print(f"⚠️ parse_element error: {e}")
+                finally:
+                    elem.clear()
+
+        except ET.ParseError as e:
+            # XML fragment is malformed — recover gracefully
+            print(f"⚠️ Skipping malformed chunk ({e})")
+            parser = ET.XMLPullParser(['start', 'end'])
+            parser.feed('<root>')
+            continue
+
+print(f"✅ Finished parsing {chunk_count} chunks, {len(processed_frames)} unique frames inserted.")
