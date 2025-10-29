@@ -1,233 +1,272 @@
+# pydeck3D.py
+
 import os
 import re
-import pydeck as pdk
-import pandas as pd
 import json
-import time
 from pathlib import Path
+import pydeck as pdk
 
+# -----------------------------
+# Configuration
+# -----------------------------
 MAPBOX_TOKEN = "pk.eyJ1IjoibWNtaWtlMjkiLCJhIjoiY21oOWcxYXl0MG56eDJqcHkxeDl2OWx3dSJ9.xbojrrnBboUk3zq8lxLIuw"
+CENTER = {"lat": 35.283, "lon": -120.66}
+OPEN_BROWSER = True
+USE_TERRAIN = False
+HTML_OUT = "deck_trips.html"
+
+# (Harmless) also set token in pydeck env
 os.environ["MAPBOX_API_KEY"] = MAPBOX_TOKEN
 pdk.settings.mapbox_api_key = MAPBOX_TOKEN
 
-def patch_html_file(filename, mapbox_token):
-    """Injects Mapbox GL JS, CSS, and access token into a pydeck HTML file."""
-    with open(filename, "r", encoding="utf-8") as f:
-        html = f.read()
 
-    # Inject the CSS, JS, and token before </head>
-    fix_snippet = f"""
-    <!-- ✅ Auto-injected Mapbox fix -->
-    <link href="https://api.mapbox.com/mapbox-gl-js/v2.9.2/mapbox-gl.css" rel="stylesheet" />
-    <script src="https://api.mapbox.com/mapbox-gl-js/v2.9.2/mapbox-gl.js"></script>
-    <script>
-      mapboxgl.accessToken = "{mapbox_token}";
-    </script>
-    """
-
-    if "</head>" in html and "mapboxgl.accessToken" not in html:
-        html = re.sub(r"</head>", fix_snippet + "\n</head>", html)
-
-    with open(filename, "w", encoding="utf-8") as f:
-        f.write(html)
-
-# ---------------------------------------------
-# Load frames (your parsed traffic metadata)
-# ---------------------------------------------
-# with open("outputs/output3.json", "r") as f:
-#     frames = json.load(f)
-
-# Map (Foothill Blvd & Santa Rosa St for example)
-CENTER = {"lat": 35.283, "lon": -120.66}
-
+# -----------------------------
+# Data loading
+# -----------------------------
 def load_frames_from_json(file_path: Path):
-    """Load parsed Bosch metadata JSON."""
     with open(file_path, "r", encoding="utf-8") as f:
-        frames = json.load(f)
-    return frames
-
-# ---------------------------------------------
-# Function to create deck.gl layer from one frame
-# ---------------------------------------------
-# def make_layer_from_frame(frame):
-#     df_rows = []
-#     for obj in frame:
-#         # Flexible coordinate support
-#         if "lat" in obj and "lon" in obj:
-#             lat, lon = obj["lat"], obj["lon"]
-#         elif "x" in obj and "y" in obj:
-#             # Convert normalized x/y to approximate GPS offset
-#             lat = CENTER["lat"] + obj["y"] * 0.001
-#             lon = CENTER["lon"] + obj["x"] * 0.001
-#         else:
-#             if lat is None or lon is None:
-#             # Skip objects with no coordinates
-#                 continue
-
-#         df_rows.append({
-#             "lat": float(lat) if lat not in [None, ""] else CENTER["lat"],
-#             "lon": float(lon) if lon not in [None, ""] else CENTER["lon"],
-#             "type": obj.get("type", "unknown")
-#         })
-
-#     df = pd.DataFrame(df_rows)
-
-#     color_map = {
-#         "car": [255, 0, 0],
-#         "person": [0, 255, 0],
-#         "truck": [255, 165, 0],
-#         "bus": [255, 255, 0],
-#     }
-
-#     df["color"] = df["type"].map(color_map)
-#     df["color"] = df["color"].apply(lambda c: c if isinstance(c, list) else [0, 0, 255])
+        return json.load(f)
 
 
-#     return pdk.Layer(
-#         "ScatterplotLayer",
-#         df,
-#         get_position=["lon", "lat"],
-#         get_color="color",
-#         get_radius=10,
-#         pickable=True,
-#         auto_highlight=True
-#     )
-
-# def make_animated_layer(frames):
-#     """Flatten frames into a time-sequenced DataFrame for PyDeck animation."""
-#     records = []
-#     for t, frame in enumerate(frames):
-#         for obj in frame:
-#             x = obj.get("x", 0.5)
-#             y = obj.get("y", 0.5)
-#             lat = CENTER["lat"] + (y - 0.5) * 0.001
-#             lon = CENTER["lon"] + (x - 0.5) * 0.001
-#             obj_type = obj.get("type", "unknown").lower()
-#             color = {
-#                 "car": [255, 0, 0],
-#                 "truck": [255, 140, 0],
-#                 "person": [0, 255, 0],
-#                 "bus": [255, 255, 0],
-#             }.get(obj_type, [0, 128, 255])
-#             records.append({
-#                 "lat": lat,
-#                 "lon": lon,
-#                 "time": t,        # frame index as time
-#                 "color": color,
-#                 "type": obj_type
-#             })
-
-#     df = pd.DataFrame(records)
-
-#     layer = pdk.Layer(
-#         "ScatterplotLayer",
-#         df,
-#         get_position=["lon", "lat"],
-#         get_fill_color="color",
-#         get_radius=15,
-#         pickable=True,
-#         auto_highlight=True,
-#     )
-
-#     # Define view and animation parameters
-#     view_state = pdk.ViewState(
-#         latitude=CENTER["lat"], longitude=CENTER["lon"], zoom=17, pitch=45
-#     )
-
-#     # Add an animation description so Deck.GL interpolates frames over time
-#     tooltip = {"text": "Type: {type}\nFrame: {time}"}
-
-#     deck = pdk.Deck(
-#         layers=[layer],
-#         initial_view_state=view_state,
-#         tooltip=tooltip,
-#         map_style="mapbox://styles/mapbox/dark-v11",
-#     )
-
-#     # Add built-in JS animation (Deck.GL animation loop)
-#     html = deck.to_html("deck_live.html", open_browser=True, notebook_display=False)
-#     print("✅ Saved animated deck to deck_live.html")
-
-#     return df
-
-def make_trips_layer(frames):
-    """Convert frame-by-frame detections into smooth animated 'trips'."""
-    # Build dictionary of tracks (one per object_id)
+# -----------------------------
+# Trips data prep
+# -----------------------------
+def frames_to_trips(frames):
     tracks = {}
     for t, frame in enumerate(frames):
         for obj in frame:
-            obj_id = obj.get("id", f"anon_{t}_{id(obj)}")
-            x = obj.get("x", 0.5)
-            y = obj.get("y", 0.5)
+            obj_id = obj.get("id", f"anon_{t}")
+            x = float(obj.get("x", 0.5))
+            y = float(obj.get("y", 0.5))
             lat = CENTER["lat"] + (y - 0.5) * 0.001
             lon = CENTER["lon"] + (x - 0.5) * 0.001
             if obj_id not in tracks:
-                tracks[obj_id] = {
-                    "path": [],
-                    "timestamps": [],
-                    "type": obj.get("type", "unknown").lower(),
-                }
+                tracks[obj_id] = {"path": [], "timestamps": [], "type": obj.get("type", "unknown").lower()}
             tracks[obj_id]["path"].append([lon, lat])
             tracks[obj_id]["timestamps"].append(t)
 
-    # Prepare list for Deck.GL
-    trip_data = []
-    color_map = {
-        "car": [255, 0, 0],
-        "truck": [255, 140, 0],
-        "person": [0, 255, 0],
-        "bus": [255, 255, 0],
-    }
-
-    for obj_id, track in tracks.items():
-        obj_type = track["type"]
-        trip_data.append({
-            "path": track["path"],
-            "timestamps": track["timestamps"],
+    color_map = {"car": [255, 0, 0], "truck": [255, 140, 0], "person": [0, 255, 0], "bus": [255, 255, 0]}
+    trips, max_t = [], 0
+    for tr in tracks.values():
+        obj_type = tr["type"]
+        trips.append({
+            "path": tr["path"],
+            "timestamps": tr["timestamps"],
             "type": obj_type,
-            "color": color_map.get(obj_type, [0, 128, 255])
+            "color": color_map.get(obj_type, [0, 128, 255]),
         })
+        if tr["timestamps"]:
+            max_t = max(max_t, tr["timestamps"][-1])
+    return trips, max_t
 
-    # Create TripsLayer
+
+# -----------------------------
+# Build deck (style URL includes token)
+# -----------------------------
+def build_deck(trip_data, current_time=0):
     trips_layer = pdk.Layer(
         "TripsLayer",
+        id="trips",
         data=trip_data,
         get_path="path",
         get_timestamps="timestamps",
         get_color="color",
-        opacity=0.8,
+        opacity=0.85,
         width_min_pixels=3,
         rounded=True,
         trail_length=20,
-        current_time=0,
+        current_time=current_time,
     )
+
+    terrain_layer = pdk.Layer(
+        "TerrainLayer",
+        data=f"https://api.mapbox.com/v4/mapbox.terrain-rgb/{{z}}/{{x}}/{{y}}.pngraw?access_token={MAPBOX_TOKEN}",
+        elevation_decoder={"rScaler": 6553.6, "gScaler": 25.6, "bScaler": 0.1, "offset": -10000},
+        texture="https://api.mapbox.com/styles/v1/mapbox/satellite-v9/tiles/{z}/{x}/{y}?access_token=" + MAPBOX_TOKEN,
+        max_zoom=14,
+        strategy="no-overlap",
+        pickable=False,
+    )
+
+    layers = [trips_layer]
+    if USE_TERRAIN:
+        layers.insert(0, terrain_layer)
 
     view_state = pdk.ViewState(
-        latitude=CENTER["lat"],
-        longitude=CENTER["lon"],
-        zoom=17,
-        pitch=60,
-        bearing=0,
+        latitude=CENTER["lat"], longitude=CENTER["lon"], zoom=17, pitch=60, bearing=0
     )
 
+    # Put the token in the style URL (helps, but not sufficient alone)
+    style_with_token = f"https://api.mapbox.com/styles/v1/mapbox/dark-v11?access_token={MAPBOX_TOKEN}"
+
     deck = pdk.Deck(
-        layers=[trips_layer],
+        layers=layers,
         initial_view_state=view_state,
-        map_style="mapbox://styles/mapbox/dark-v11",
+        map_style=style_with_token,
         tooltip={"text": "Type: {type}"},
+        views=[pdk.View("MapView", controller=True)],
     )
-    print(f"Loaded {len(trip_data)} trip paths")
-    
-    # Export to HTML with animation controls
-    html_path = "deck_trips.html"
-    deck.to_html(html_path, open_browser=True)
-    patch_html_file("deck_trips.html", "pk.eyJ1IjoibWNtaWtlMjkiLCJhIjoiY21nc2N4c2x1MmpydTJrcHllaDM1NGhxayJ9.MX6gzygrD5m2FtfTCKMTPA")
-    print(f"✅ Created animated 3D trips map at {html_path}")
-    
-if __name__ == "__main__":
+    return deck
+
+
+# -----------------------------
+# HTML post-processing
+# -----------------------------
+def inject_mapbox_css_js_and_token(html_path: str, token: str):
+    """Ensure Mapbox GL CSS+JS load first and token is set in <head>."""
+    with open(html_path, "r", encoding="utf-8") as f:
+        html = f.read()
+
+    css_snippet = """
+    <!-- ✅ Mapbox GL CSS -->
+    <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet" />
+    """
+    js_snippet = """
+    <!-- ✅ Mapbox GL JS -->
+    <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
+    """
+    token_snippet = f"""
+    <!-- ✅ Set Mapbox token ASAP -->
+    <script>
+      (function() {{
+        function setTok() {{
+          try {{
+            if (typeof mapboxgl !== 'undefined') {{
+              mapboxgl.accessToken = "{token}";
+              return true;
+            }}
+          }} catch(e) {{}}
+          return false;
+        }}
+        if (!setTok()) {{
+          var iv = setInterval(function() {{
+            if (setTok()) clearInterval(iv);
+          }}, 10);
+        }}
+      }})();
+    </script>
+    """
+
+    # Prepend right after <head> to guarantee early execution
+    if "<head>" in html:
+        insertion = ""
+        if "mapbox-gl.css" not in html:
+            insertion += css_snippet
+        if "mapbox-gl.js" not in html:
+            insertion += js_snippet
+        if "mapboxgl.accessToken" not in html:
+            insertion += token_snippet
+        if insertion:
+            html = html.replace("<head>", "<head>\n" + insertion, 1)
+
+    with open(html_path, "w", encoding="utf-8") as f:
+        f.write(html)
+
+
+def inject_deck_constructor_token(html_path: str, token: str):
+    """
+    Insert mapboxApiAccessToken / mapboxAccessToken directly into:
+      new deck.DeckGL({ ... })
+    as the very first properties to avoid race conditions. Works even if pydeck
+    changes whitespace or inserts 'var deckgl = ' etc.
+    """
+    with open(html_path, "r", encoding="utf-8") as f:
+        html = f.read()
+
+    # Match new deck.DeckGL({ ... })
+    # Capture group 1 = opening 'new deck.DeckGL({'
+    # We then inject our token props immediately after '{'
+    pattern = r"(new\s+deck\.DeckGL\(\s*\{)"
+    replacement = r'new deck.DeckGL({mapboxApiAccessToken:"' + token + r'",mapboxAccessToken:"' + token + r'",'
+    if re.search(pattern, html):
+        # Avoid double-injecting
+        if "mapboxApiAccessToken" not in html and "mapboxAccessToken" not in html:
+            html = re.sub(pattern, replacement, html, count=1)
+
+    # Also cover the common "var deckgl = new deck.DeckGL({" prefix (already handled by the same regex)
+    with open(html_path, "w", encoding="utf-8") as f:
+        f.write(html)
+
+
+def inject_animation_js(html_path, max_time, fps=30):
+    with open(html_path, "r", encoding="utf-8") as f:
+        html = f.read()
+
+    anim_js = f"""
+<script>
+(function () {{
+  try {{ if (typeof deckgl !== 'undefined') window.deckgl = deckgl; }} catch (e) {{}}
+
+  function getTripsLayer(layers) {{
+    return layers.find(l => l && l.id && l.id === 'trips');
+  }}
+
+  function startAnimation() {{
+    if (!window.deckgl) {{
+      let tries = 0;
+      const it = setInterval(() => {{
+        if (window.deckgl) {{ clearInterval(it); startAnimation(); }}
+        else if (++tries > 60) {{ clearInterval(it); }}
+      }}, 100);
+      return;
+    }}
+
+    let t = 0;
+    const T = {max_time if max_time > 0 else 1};
+    const dt = 1 / {fps};
+
+    function tick() {{
+      t = (t + dt);
+      if (t > T) t = 0;
+
+      const layers = window.deckgl.props.layers || [];
+      const trips = getTripsLayer(layers);
+      if (trips && trips.clone) {{
+        const newTrips = trips.clone({{currentTime: t}});
+        const newLayers = layers.map(l => (l && l.id === 'trips') ? newTrips : l);
+        window.deckgl.setProps({{layers: newLayers}});
+      }}
+      requestAnimationFrame(tick);
+    }}
+    requestAnimationFrame(tick);
+  }}
+  startAnimation();
+}})();
+</script>
+"""
+    if "</body>" in html and anim_js not in html:
+        html = html.replace("</body>", anim_js + "\n</body>")
+
+    with open(html_path, "w", encoding="utf-8") as f:
+        f.write(html)
+
+
+# -----------------------------
+# Main
+# -----------------------------
+def main():
     out_dir = Path("outputs")
     latest = sorted(out_dir.glob("output*.json"))[-1]
     frames = load_frames_from_json(latest)
-    print(f"Loaded {len(frames)} frames.")
-    make_trips_layer(frames)
+    print(f"Loaded {len(frames)} frames from {latest.name}")
 
+    trip_data, max_t = frames_to_trips(frames)
+    print(f"Built {len(trip_data)} trip paths; max time index = {max_t}")
+
+    deck = build_deck(trip_data, current_time=0)
+
+    deck.to_html(
+        HTML_OUT,
+        open_browser=OPEN_BROWSER,
+        notebook_display=False,
+    )
+
+    # Order matters: load JS+CSS + set token FIRST, then ensure constructor has token, then animate
+    inject_mapbox_css_js_and_token(HTML_OUT, MAPBOX_TOKEN)  # CSS, JS, early token
+    inject_deck_constructor_token(HTML_OUT, MAPBOX_TOKEN)   # token inside DeckGL({...})
+    inject_animation_js(HTML_OUT, max_time=max_t, fps=30)   # animation
+    print(f"✅ Created animated 3D trips map at {HTML_OUT}")
+
+
+if __name__ == "__main__":
+    main()
