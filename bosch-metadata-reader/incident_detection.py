@@ -24,7 +24,7 @@ from sklearn.preprocessing import StandardScaler
 
 DEFAULT_CSV = "combined_vehicle_stats_expanded.csv"
 MODELS_DIR = "models"
-CUTOFF_QUANTILE = 0.01    # bottom 1% considered anomalous
+CUTOFF_QUANTILE = 0.00    # bottom 1% considered anomalous
 PERSIST_WINDOW = 3
 PERSIST_MIN = 2
 MIN_FRAME_POINTS = 5
@@ -320,7 +320,6 @@ def main():
         models = train_by_location(df)
     else:
         models = load_latest_models()
-        models = maybe_retrain_if_drifted(df, models)
 
     detect_and_visualize(df, models, bounds)
 
