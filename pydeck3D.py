@@ -1,6 +1,7 @@
 import os
 import re
 import json
+from dotenv import load_dotenv
 from pathlib import Path
 import pydeck as pdk
 
@@ -12,29 +13,7 @@ import pydeck as pdk
 # -----------------------------
 
 # ✅ Paste your Mapbox token here
-def _load_env_file(path: str = ".env"):
-    """Minimal .env loader as a fallback if python-dotenv isn't installed."""
-    if not os.path.exists(path):
-        return
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                k, v = line.split("=", 1)
-                k = k.strip()
-                v = v.strip().strip('"').strip("'")
-                os.environ.setdefault(k, v)
-    except Exception:
-        pass
-
-# Try python-dotenv first; fall back to the tiny loader above
-try:
-    from dotenv import load_dotenv  # type: ignore
-    load_dotenv()
-except Exception:
-    _load_env_file()
+load_dotenv()
 MAPBOX_TOKEN = os.getenv("MAPBOX_ACCESS_TOKEN")
 if not MAPBOX_TOKEN:
     raise RuntimeError("❌ MAPBOX_ACCESS_TOKEN is missing. Please set it in your .env file.")
