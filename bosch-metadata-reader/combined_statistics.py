@@ -199,6 +199,8 @@ def add_interaction_features_parallel(df, sample_step=1):
 # =========================
 # Save
 # =========================
+import os
+
 def save_results(df):
     keep = [
         "object_id","timestamp","location","detected_type",
@@ -206,8 +208,30 @@ def save_results(df):
         "nn_dist_m","closing_rate_mps","ttc_s","rel_speed_mps","heading_diff_deg",
         "zone_change","path_gap","certainty","is_confident","lat","lon"
     ]
-    df[keep].to_csv("combined_vehicle_stats_expanded.csv", index=False)
-    print("💾 Saved → combined_vehicle_stats_expanded.csv")
+
+    out_path = "combined_vehicle_stats_expanded.csv"
+    file_exists = os.path.exists(out_path)
+
+    # only keep relevant columns (and drop full-NaN rows if any)
+    df = df[keep].dropna(how="all")
+
+    # append to existing CSV (no overwrite!)
+    df.to_csv(
+        out_path,
+        mode="a",                     # append mode
+        header=not file_exists,        # write header only if file doesn't exist
+        index=False
+    )
+
+    print(f"💾 {'Appended to' if file_exists else 'Created'} → {out_path}")
+
+    # optional deduplication step (uncomment if needed)
+    # if file_exists:
+    #     all_data = pd.read_csv(out_path)
+    #     all_data.drop_duplicates(subset=["object_id", "timestamp"], inplace=True)
+    #     all_data.to_csv(out_path, index=False)
+    #     print("🧹 Removed duplicate rows after append.")
+
 
 # =========================
 # Main
