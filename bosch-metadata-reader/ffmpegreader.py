@@ -117,50 +117,50 @@ def parse_element(event, elem):
 # -------------------------------------------------------
 # 3. Read and parse XML (robust stream-safe version)
 # -------------------------------------------------------
-import os, glob
-import xml.etree.ElementTree as ET
+import os
+from xml.etree import ElementTree as ET
 
-def parse_single_xml(xml_path):
-    print(f"\n🚗 Processing {os.path.basename(xml_path)} ...")
-    parser = ET.XMLPullParser(['start', 'end'])
-    parser.feed('<root>')
-    processed_frames = set()
-    chunk_count = 0
+xml_path = "../xmls/output11-8-350.xml"
 
-    with open(xml_path, "rb") as process:
-        for chunk in iter(lambda: process.read(4096), b""):
-            chunk_count += 1
-            try:
-                parser.feed(chunk)
-                for event, elem in parser.read_events():
-                    try:
-                        parse_element(event, elem)
-                        if timestamp and timestamp in processed_frames:
-                            continue
-                        if timestamp:
-                            processed_frames.add(timestamp)
-                    except Exception as e:
-                        print(f"⚠️ parse_element error: {e}")
-                    finally:
-                        elem.clear()
-            except ET.ParseError as e:
-                print(f"⚠️ Skipping malformed chunk ({e})")
-                parser = ET.XMLPullParser(['start', 'end'])
-                parser.feed('<root>')
-                continue
+if not os.path.exists(xml_path):
+    raise FileNotFoundError(f"XML file not found: {xml_path}")
 
-    print(f"✅ Finished {os.path.basename(xml_path)} — {len(processed_frames)} unique frames, {chunk_count} chunks read.")
+# Set up parser and seen-frames tracker
+parser = ET.XMLPullParser(['start', 'end'])
+parser.feed('<root>')  # temp root for recovery
+processed_frames = set()
 
-# -------------------------------------------------------
-# Loop through all XMLs in ../xmls/
-# -------------------------------------------------------
-xml_folder = "../xmls"
-xml_files = sorted(glob.glob(os.path.join(xml_folder, "*.xml")))
+chunk_count = 0
 
-if not xml_files:
-    raise FileNotFoundError(f"No XML files found in {xml_folder}")
+with open(xml_path, "rb") as process:
+    for chunk in iter(lambda: process.read(4096), b""):
+        chunk_count += 1
 
-for xml_path in xml_files:
-    parse_single_xml(xml_path)
+        try:
+            parser.feed(chunk)
 
-print("\n🏁 All XMLs processed sequentially — Mongo updated safely.")
+            for event, elem in parser.read_events():
+                try:
+                    parse_element(event, elem)
+
+                    # Deduplicate by timestamp — avoids re-inserting same frame
+                    if timestamp and timestamp in processed_frames:
+                        continue
+                    if timestamp:
+                        processed_frames.add(timestamp)
+
+                except KeyError as ke:
+                    print(f"⚠️ Missing expected attribute {ke} on tag {elem.tag}")
+                except Exception as e:
+                    print(f"⚠️ parse_element error: {e}")
+                finally:
+                    elem.clear()
+
+        except ET.ParseError as e:
+            # XML fragment is malformed — recover gracefully
+            print(f"⚠️ Skipping malformed chunk ({e})")
+            parser = ET.XMLPullParser(['start', 'end'])
+            parser.feed('<root>')
+            continue
+
+print(f"✅ Finished parsing {chunk_count} chunks, {len(processed_frames)} unique frames inserted.")

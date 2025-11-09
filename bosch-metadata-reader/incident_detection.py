@@ -9,7 +9,7 @@ Usage:
     python3 incident_detection.py existing [csv_path]
 """
 
-import os, sys, pickle
+import os, sys, pickle, csv
 from datetime import datetime
 
 import numpy as np
@@ -22,7 +22,7 @@ from sklearn.preprocessing import StandardScaler
 # Config
 # =============================================================================
 
-DEFAULT_CSV = "combined_vehicle_stats_expanded.csv"
+DEFAULT_CSV = "combined_vehicle_stats_with_derivatives.csv"
 MODELS_DIR = "models"
 CUTOFF_QUANTILE = 0.00    # bottom 1% considered anomalous
 PERSIST_WINDOW = 3
@@ -216,6 +216,44 @@ def _apply_persistence(frame, raw_anom):
     return (streak >= PERSIST_MIN).astype(int)
 
 
+def group_near_miss_events(frame):
+    """Cluster anomalies that occur close in space/time into near-miss events."""
+    events = []
+    if len(frame) < 2:
+        return events
+
+    anom_idx = frame.index[frame["final_anom"] == True].tolist()
+    if not anom_idx:
+        return events
+
+    for i in range(len(anom_idx)):
+        for j in range(i + 1, len(anom_idx)):
+            a, b = frame.loc[anom_idx[i]], frame.loc[anom_idx[j]]
+            if (
+                abs(a["lon_scaled"] - b["lon_scaled"]) < 0.02
+                and abs(a["lat_scaled"] - b["lat_scaled"]) < 0.02
+                and a.get("nn_dist_m", 99) < NEAR_DIST_M
+                and b.get("nn_dist_m", 99) < NEAR_DIST_M
+            ):
+                events.append((a["object_id"], b["object_id"]))
+    return events
+
+
+def log_detected_events(events, timestamp, location):
+    """Append grouped event detections to a CSV file."""
+    if not events:
+        return
+    out_file = "detected_events.csv"
+    header = ["timestamp", "location", "object_id_A", "object_id_B"]
+    file_exists = os.path.exists(out_file)
+    with open(out_file, "a", newline="") as f:
+        writer = csv.writer(f)
+        if not file_exists:
+            writer.writerow(header)
+        for a, b in events:
+            writer.writerow([timestamp, location, a, b])
+
+
 def detect_and_visualize(df, models, bounds):
     timestamps = sorted(df["timestamp"].dropna().unique())
     print(f"\n🕒 Processing {len(timestamps)} frames...\n")
@@ -244,7 +282,6 @@ def detect_and_visualize(df, models, bounds):
             subset = subset.sort_values(["timestamp", "object_id"])
 
             for t in timestamps:
-                # ✅ Detect if window manually closed
                 if not plt.fignum_exists(fig.number):
                     print("\n🟡 Plot window closed by user — exiting visualization early.")
                     raise KeyboardInterrupt
@@ -269,6 +306,13 @@ def detect_and_visualize(df, models, bounds):
                 final_anom = (persistent == 1) | ((raw_anom == 1) & near)
                 num_anom = int(final_anom.sum())
                 total_anomalies += num_anom
+                frame["final_anom"] = final_anom
+
+                # 🚨 Group multi-vehicle near-miss events
+                events = group_near_miss_events(frame)
+                if events:
+                    print(f"🚨 {len(events)} potential event(s) at {t} in {loc}: {events}")
+                    log_detected_events(events, t, loc)
 
                 text.set_text(
                     f"Timestamp: {pd.to_datetime(t)}\n"
@@ -296,8 +340,6 @@ def detect_and_visualize(df, models, bounds):
             pass
         print("\n✅ Visualization ended gracefully.")
         print(f"📊 TOTAL anomalies detected across all frames: {total_anomalies}")
-
-
 
 
 # =============================================================================
