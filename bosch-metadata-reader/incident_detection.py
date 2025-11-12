@@ -1,183 +1,370 @@
 #!/usr/bin/env python3
 """
 incident_detection.py
-FINAL version — supports retraining and reusing existing models.
+Adaptive per-location IsolationForest over motion + interaction features.
+Trains only on "normal" data (your CSV) to learn baseline traffic flow.
 
 Usage:
-    python3 incident_detection.py train     # retrains + saves new model
-    python3 incident_detection.py existing  # loads latest saved model
+    python3 incident_detection.py train [csv_path]
+    python3 incident_detection.py existing [csv_path]
 """
 
-import pandas as pd
-import numpy as np
-from sklearn.ensemble import IsolationForest
-from sklearn.preprocessing import StandardScaler
-import matplotlib.pyplot as plt
-import os, sys, pickle
+import os, sys, pickle, csv
 from datetime import datetime
 
-# -------------------------------------------------------
-# 1. Load expanded dataset
-# -------------------------------------------------------
-def load_data(csv_path="combined_vehicle_stats_expanded.csv"):
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from sklearn.ensemble import IsolationForest
+from sklearn.preprocessing import StandardScaler
+
+# =============================================================================
+# Config
+# =============================================================================
+
+DEFAULT_CSV = "combined_vehicle_stats_with_derivatives.csv"
+MODELS_DIR = "models"
+CUTOFF_QUANTILE = 0.00    # bottom 1% considered anomalous
+PERSIST_WINDOW = 3
+PERSIST_MIN = 2
+MIN_FRAME_POINTS = 5
+PAUSE_SEC = 0.35
+
+# corroboration thresholds
+NEAR_DIST_M = 8.0
+NEAR_HEADING_DIFF = 45.0
+NEAR_TTC_S = 3.0
+
+# =============================================================================
+# Load CSV + scale lat/lon
+# =============================================================================
+
+def load_data(csv_path: str = DEFAULT_CSV) -> pd.DataFrame:
     if not os.path.exists(csv_path):
         raise FileNotFoundError(f"CSV not found: {csv_path}")
     df = pd.read_csv(csv_path)
     df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
-    df = df.sort_values("timestamp")
-    print(f"✅ Loaded {len(df)} records from {csv_path}")
+    df = df.sort_values(["location", "timestamp"]).reset_index(drop=True)
+    print(f"✅ Loaded {len(df)} rows from {csv_path}")
     return df
 
 
-# -------------------------------------------------------
-# 2. Compute per-location scaling (0–1)
-# -------------------------------------------------------
-def scale_per_location(df):
+def scale_per_location(df: pd.DataFrame):
+    df = df.copy()
     bounds = {}
-    for loc, group in df.groupby("location"):
-        lat_min, lat_max = group["lat"].min(), group["lat"].max()
-        lon_min, lon_max = group["lon"].min(), group["lon"].max()
+    for loc, g in df.groupby("location"):
+        lat_min, lat_max = g["lat"].min(), g["lat"].max()
+        lon_min, lon_max = g["lon"].min(), g["lon"].max()
+        lat_rng = (lat_max - lat_min) if lat_max != lat_min else 1.0
+        lon_rng = (lon_max - lon_min) if lon_max != lon_min else 1.0
 
-        df.loc[group.index, "lat_scaled"] = (group["lat"] - lat_min) / (lat_max - lat_min)
-        df.loc[group.index, "lon_scaled"] = (group["lon"] - lon_min) / (lon_max - lon_min)
-
+        idx = g.index
+        df.loc[idx, "lat_scaled"] = (g["lat"] - lat_min) / lat_rng
+        df.loc[idx, "lon_scaled"] = (g["lon"] - lon_min) / lon_rng
         bounds[loc] = (lon_min, lon_max, lat_min, lat_max)
-        print(f"📍 {loc}: lat({lat_min:.6f}–{lat_max:.6f}), lon({lon_min:.6f}–{lon_max:.6f})")
+    print("📍 Scaled latitude/longitude per location.")
     return df, bounds
 
 
-# -------------------------------------------------------
-# 3. Train + save or load model
-# -------------------------------------------------------
-def train_global_model(df):
-    X = df[["speed", "lat_scaled", "lon_scaled"]].fillna(0).values
-    X[:, 0] *= 3.0  # emphasize speed
+# =============================================================================
+# Feature selection
+# =============================================================================
 
-    scaler = StandardScaler().fit(X)
-    X_scaled = scaler.transform(X)
+def _present(df, cols):
+    return [c for c in cols if c in df.columns]
 
-    print("\n🧠 Training global IsolationForest (learning normal traffic pattern)...")
-    model = IsolationForest(
-        n_estimators=400,
-        contamination=0.0000,
-        random_state=42,
-        n_jobs=-1
-    ).fit(X_scaled)
-    print("✅ Model trained successfully.")
-
-    # Save both model + scaler
-    os.makedirs("models", exist_ok=True)
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
-    model_path = f"models/model_{timestamp}.pkl"
-
-    with open(model_path, "wb") as f:
-        pickle.dump({"model": model, "scaler": scaler}, f)
-
-    print(f"💾 Saved model and scaler → {model_path}")
-    return model, scaler
+def get_feature_columns(df):
+    primary = [
+        "speed_mps", "accel", "jerk",
+        "d_heading_deg", "zone_change", "path_gap",
+        "nn_dist_m", "rel_speed_mps", "heading_diff_deg",
+        "closing_rate_mps", "ttc_s",
+        "lat_scaled", "lon_scaled",
+    ]
+    feats = _present(df, primary)
+    if not feats:
+        print("⚠️ Enriched features missing; falling back to base columns.")
+        feats = _present(df, ["speed", "lat_scaled", "lon_scaled"])
+    return feats
 
 
-def load_latest_model():
-    os.makedirs("models", exist_ok=True)
-    model_files = [f for f in os.listdir("models") if f.endswith(".pkl")]
-    if not model_files:
-        raise FileNotFoundError("❌ No saved models found in 'models/' — please train first.")
+# =============================================================================
+# Drift + alignment helpers
+# =============================================================================
 
-    latest = max(model_files, key=lambda x: os.path.getmtime(os.path.join("models", x)))
-    latest_path = os.path.join("models", latest)
+def align_features(df, model_features):
+    """Ensure df columns match model expectations."""
+    aligned = df.copy()
+    for f in model_features:
+        if f not in aligned.columns:
+            aligned[f] = 0.0
+    aligned = aligned[model_features]
+    return aligned
 
-    with open(latest_path, "rb") as f:
-        data = pickle.load(f)
+def detect_drift(scaler, new_X, threshold=0.25):
+    old_mean, old_std = scaler.mean_, scaler.scale_
+    new_mean, new_std = np.mean(new_X, axis=0), np.std(new_X, axis=0)
+    mean_drift = np.mean(np.abs(new_mean - old_mean) / (old_std + 1e-8))
+    std_drift = np.mean(np.abs(new_std - old_std) / (old_std + 1e-8))
+    drift = max(mean_drift, std_drift)
+    return drift > threshold, drift
 
-    print(f"📂 Loaded existing model from {latest_path}")
-    return data["model"], data["scaler"]
+
+# =============================================================================
+# Train / Save / Load
+# =============================================================================
+
+def train_by_location(df: pd.DataFrame):
+    os.makedirs(MODELS_DIR, exist_ok=True)
+    models = {}
+    features = get_feature_columns(df)
+    if not features:
+        raise RuntimeError("No usable features to train on.")
+
+    print("\n🧠 Training IsolationForest per location...")
+    for loc, g in df.groupby("location"):
+        g = g[g["is_confident"].fillna(True)] if "is_confident" in g else g
+        X = g[features].replace([np.inf, -np.inf], np.nan).fillna(0.0).to_numpy(float)
+        if len(X) < 50:
+            print(f"   • Skipping {loc}: only {len(X)} samples.")
+            continue
+
+        scaler = StandardScaler().fit(X)
+        Xs = scaler.transform(X)
+
+        model = IsolationForest(
+            n_estimators=400,
+            contamination=0.001,
+            random_state=42,
+            n_jobs=-1
+        ).fit(Xs)
+
+        scores = model.decision_function(Xs)
+        cut = np.quantile(scores, CUTOFF_QUANTILE)
+        models[loc] = {"model": model, "scaler": scaler, "features": features, "cut": float(cut)}
+        print(f"   • {loc}: trained ({len(X)} pts), cutoff={cut:.5f}")
+
+    ts = datetime.now().strftime("%Y-%m-%d_%H-%M")
+    out_path = os.path.join(MODELS_DIR, f"models_by_loc_{ts}.pkl")
+    with open(out_path, "wb") as f:
+        pickle.dump(models, f)
+    print(f"\n💾 Models saved → {out_path}")
+    return models
 
 
-# -------------------------------------------------------
-# 4. Frame-by-frame detection
-# -------------------------------------------------------
-def detect_and_visualize(df, model, scaler, bounds):
+def load_latest_models():
+    if not os.path.exists(MODELS_DIR):
+        raise FileNotFoundError("❌ Models directory not found.")
+    files = [f for f in os.listdir(MODELS_DIR) if f.endswith(".pkl")]
+    if not files:
+        raise FileNotFoundError("❌ No saved models in /models.")
+    latest = max(files, key=lambda x: os.path.getmtime(os.path.join(MODELS_DIR, x)))
+    path = os.path.join(MODELS_DIR, latest)
+    with open(path, "rb") as f:
+        models = pickle.load(f)
+    print(f"📂 Loaded models from {path}")
+    return models
+
+
+def maybe_retrain_if_drifted(df, models):
+    updated = 0
+    for loc, g in df.groupby("location"):
+        if loc not in models:
+            print(f"🆕 New location {loc} → training new model.")
+            new_model = train_by_location(g)
+            if loc in new_model:
+                models[loc] = new_model[loc]
+                updated += 1
+            continue
+
+        entry = models[loc]
+        feats = entry["features"]
+        X = align_features(g, feats).replace([np.inf, -np.inf], np.nan).fillna(0.0).to_numpy(float)
+        Xs = entry["scaler"].transform(X)
+        drifted, val = detect_drift(entry["scaler"], Xs)
+        if drifted:
+            print(f"⚠️ Drift detected for {loc} (drift={val:.2f}) → retraining...")
+            retrained = train_by_location(g)
+            if loc in retrained:
+                models[loc] = retrained[loc]
+                updated += 1
+
+    if updated:
+        ts = datetime.now().strftime("%Y-%m-%d_%H-%M")
+        path = os.path.join(MODELS_DIR, f"models_adapted_{ts}.pkl")
+        with open(path, "wb") as f:
+            pickle.dump(models, f)
+        print(f"💾 {updated} model(s) updated → {path}")
+    return models
+
+
+# =============================================================================
+# Detection + Visualization
+# =============================================================================
+
+def _apply_persistence(frame, raw_anom):
+    frame = frame.copy()
+    frame["anom_raw"] = raw_anom.astype(int)
+    frame.sort_values(["object_id", "timestamp"], inplace=True)
+    streak = (
+        frame.groupby("object_id")["anom_raw"]
+        .rolling(PERSIST_WINDOW, min_periods=1)
+        .sum()
+        .reset_index(level=0, drop=True)
+        .values
+    )
+    return (streak >= PERSIST_MIN).astype(int)
+
+
+def group_near_miss_events(frame):
+    """Cluster anomalies that occur close in space/time into near-miss events."""
+    events = []
+    if len(frame) < 2:
+        return events
+
+    anom_idx = frame.index[frame["final_anom"] == True].tolist()
+    if not anom_idx:
+        return events
+
+    for i in range(len(anom_idx)):
+        for j in range(i + 1, len(anom_idx)):
+            a, b = frame.loc[anom_idx[i]], frame.loc[anom_idx[j]]
+            if (
+                abs(a["lon_scaled"] - b["lon_scaled"]) < 0.02
+                and abs(a["lat_scaled"] - b["lat_scaled"]) < 0.02
+                and a.get("nn_dist_m", 99) < NEAR_DIST_M
+                and b.get("nn_dist_m", 99) < NEAR_DIST_M
+            ):
+                events.append((a["object_id"], b["object_id"]))
+    return events
+
+
+def log_detected_events(events, timestamp, location):
+    """Append grouped event detections to a CSV file."""
+    if not events:
+        return
+    out_file = "detected_events.csv"
+    header = ["timestamp", "location", "object_id_A", "object_id_B"]
+    file_exists = os.path.exists(out_file)
+    with open(out_file, "a", newline="") as f:
+        writer = csv.writer(f)
+        if not file_exists:
+            writer.writerow(header)
+        for a, b in events:
+            writer.writerow([timestamp, location, a, b])
+
+
+def detect_and_visualize(df, models, bounds):
     timestamps = sorted(df["timestamp"].dropna().unique())
     print(f"\n🕒 Processing {len(timestamps)} frames...\n")
-
     plt.ion()
     total_anomalies = 0
 
     try:
-        for loc, group in df.groupby("location"):
-            print(f"\n🌍 Location: {loc}")
-            subset = group.copy()
+        for loc, subset in df.groupby("location"):
+            if loc not in models:
+                print(f"⚠️ No model for {loc}, skipping.")
+                continue
+
+            model = models[loc]["model"]
+            scaler = models[loc]["scaler"]
+            features = models[loc]["features"]
+            cut = models[loc]["cut"]
 
             fig, ax = plt.subplots(figsize=(7, 6))
-            ax.set_title(f"Live Anomaly Detection — {loc} (red = anomaly)")
-            ax.set_xlabel("Longitude (scaled)")
-            ax.set_ylabel("Latitude (scaled)")
-            ax.grid(True)
+            ax.set_title(f"{loc} — Anomaly Detection (red = anomaly)")
             ax.set_xlim(0, 1)
             ax.set_ylim(0, 1)
-
-            scatter = ax.scatter([], [], c=[], alpha=0.7, s=40)
+            ax.grid(True)
+            scatter = ax.scatter([], [], c=[], alpha=0.8, s=36)
             text = ax.text(0.02, 0.98, "", transform=ax.transAxes, va="top")
 
-            window_size = 5
-            rolling_flags = []
+            subset = subset.sort_values(["timestamp", "object_id"])
 
             for t in timestamps:
                 if not plt.fignum_exists(fig.number):
+                    print("\n🟡 Plot window closed by user — exiting visualization early.")
                     raise KeyboardInterrupt
 
                 frame = subset[subset["timestamp"] == t].copy()
-                if len(frame) < 5:
+                if len(frame) < MIN_FRAME_POINTS:
                     continue
 
-                X = frame[["speed", "lat_scaled", "lon_scaled"]].fillna(0).values
-                X[:, 0] *= 3.0
-                X_scaled = scaler.transform(X)
+                X = align_features(frame, features).replace([np.inf, -np.inf], np.nan).fillna(0.0).to_numpy(float)
+                Xs = scaler.transform(X)
+                scores = model.decision_function(Xs)
+                raw_anom = (scores <= cut).astype(int)
+                persistent = _apply_persistence(frame, raw_anom)
 
-                frame["is_anomaly"] = model.predict(X_scaled)
-                frame["anomaly_score"] = model.decision_function(X_scaled)
-                num_anom = (frame["is_anomaly"] == -1).sum()
+                near = np.zeros(len(frame), dtype=bool)
+                if {"nn_dist_m", "heading_diff_deg", "ttc_s"} <= set(frame.columns):
+                    nn = frame["nn_dist_m"].to_numpy(float)
+                    hd = frame["heading_diff_deg"].to_numpy(float)
+                    ttc = frame["ttc_s"].to_numpy(float)
+                    near = (nn < NEAR_DIST_M) & (hd < NEAR_HEADING_DIFF) & (ttc < NEAR_TTC_S)
+
+                final_anom = (persistent == 1) | ((raw_anom == 1) & near)
+                num_anom = int(final_anom.sum())
                 total_anomalies += num_anom
+                frame["final_anom"] = final_anom
 
-                rolling_flags.append(num_anom)
-                if len(rolling_flags) > window_size:
-                    rolling_flags.pop(0)
-                avg_anom = np.mean(rolling_flags)
+                # 🚨 Group multi-vehicle near-miss events
+                events = group_near_miss_events(frame)
+                if events:
+                    print(f"🚨 {len(events)} potential event(s) at {t} in {loc}: {events}")
+                    log_detected_events(events, t, loc)
 
                 text.set_text(
-                    f"Timestamp: {t}\nFrame anomalies: {num_anom}/{len(frame)}\nRolling avg: {avg_anom:.2f}"
+                    f"Timestamp: {pd.to_datetime(t)}\n"
+                    f"Anomalies: {num_anom}/{len(frame)}"
                 )
-                colors = np.where(frame["is_anomaly"] == -1, "red", "blue")
+
+                colors = np.where(final_anom, "red", "gray")
                 scatter.set_offsets(np.c_[frame["lon_scaled"], frame["lat_scaled"]])
                 scatter.set_color(colors)
-
-                plt.pause(0.4)
+                plt.pause(PAUSE_SEC)
 
             plt.close(fig)
 
     except KeyboardInterrupt:
-        print("\n🛑 Visualization interrupted by user (window closed).")
+        print("\n🟡 Visualization interrupted by user (Ctrl-C or window close).")
+
+    except Exception as e:
+        print(f"\n⚠️ Visualization stopped unexpectedly: {type(e).__name__} — {e}")
 
     finally:
-        plt.ioff()
-        print(f"\n📊 TOTAL anomalies detected across all frames: {total_anomalies}")
+        try:
+            plt.close("all")
+            plt.ioff()
+        except Exception:
+            pass
+        print("\n✅ Visualization ended gracefully.")
+        print(f"📊 TOTAL anomalies detected across all frames: {total_anomalies}")
 
 
-# -------------------------------------------------------
-# 5. Main
-# -------------------------------------------------------
-if __name__ == "__main__":
+# =============================================================================
+# Main
+# =============================================================================
+
+def main():
     if len(sys.argv) < 2 or sys.argv[1] not in ("train", "existing"):
-        print("Usage: python3 incident_detection.py [train|existing]")
+        print("Usage: python3 incident_detection.py [train|existing] [optional_csv_path]")
         sys.exit(1)
 
     mode = sys.argv[1]
-    df = load_data()
+    csv_path = sys.argv[2] if len(sys.argv) > 2 else DEFAULT_CSV
+
+    df = load_data(csv_path)
     df, bounds = scale_per_location(df)
 
     if mode == "train":
-        model, scaler = train_global_model(df)
+        print("\n🚦 Treating all data as NORMAL baseline traffic.")
+        models = train_by_location(df)
     else:
-        model, scaler = load_latest_model()
+        models = load_latest_models()
 
-    detect_and_visualize(df, model, scaler, bounds)
+    detect_and_visualize(df, models, bounds)
+
+
+if __name__ == "__main__":
+    main()
