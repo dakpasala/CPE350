@@ -13,6 +13,7 @@ import pandas as pd
 import numpy as np
 import os
 
+
 def compute_derivatives(df: pd.DataFrame) -> pd.DataFrame:
     """Compute acceleration and jerk per object using timestamp deltas."""
     df = df.copy()
