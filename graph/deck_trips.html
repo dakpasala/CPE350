@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta http-equiv="content-type" content="text/html; charset=UTF-8" />
+    <title>pydeck</title>
+        <script src="https://api.tiles.mapbox.com/mapbox-gl-js/v1.13.0/mapbox-gl.js"></script>
+        <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.2.0/css/bootstrap-theme.min.css" />
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/font-awesome/4.6.3/css/font-awesome.min.css" />
+    <script src='https://cdn.jsdelivr.net/npm/@deck.gl/jupyter-widget@~9.0.*/dist/index.js'></script>
+    <style>
+    body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+#deck-container {
+  width: 100vw;
+  height: 100vh;
+}
+
+#deck-container canvas {
+  z-index: 1;
+  background: none;
+}
+    </style>
+  </head>
+  <body>
+    <div id="deck-container">
+    </div>
+  </body>
+  <script>
+    const container = document.getElementById('deck-container');
+    const jsonInput = {
+  "initialViewState": {
+    "bearing": 0,
+    "latitude": 35.29395131849652,
+    "longitude": -120.66768333137856,
+    "pitch": 60,
+    "zoom": 19
+  },
+  "layers": [
+    {
+      "@@type": "ScatterplotLayer",
+      "data": [
+        {
+          "color": [
+            255,
+            0,
+            0,
+            220
+          ],
+          "position": [
+            -120.66774373667491,
+            35.29391350389366
+          ],
+          "type": "car"
+        },
+        {
+          "color": [
+            0,
+            255,
+            0,
+            220
+          ],
+          "position": [
+            -120.66802652488312,
+            35.29407591476817
+          ],
+          "type": "person"
+        },
+        {
+          "color": [
+            255,
+            0,
+            0,
+            220
+          ],
+          "position": [
+            -120.66761827775613,
+            35.29402907827509
+          ],
+          "type": "car"
+        },
+        {
+          "color": [
+            255,
+            0,
+            0,
+            220
+          ],
+          "position": [
+            -120.66776835393162,
+            35.2939052778415
+          ],
+          "type": "car"
+        },
+        {
+          "color": [
+            255,
+            0,
+            0,
+            220
+          ],
+          "position": [
+            -120.6677322060738,
+            35.293740905814474
+          ],
+          "type": "car"
+        },
+        {
+          "color": [
+            255,
+            0,
+            0,
+            220
+          ],
+          "position": [
+            -120.66769693991196,
+            35.29382334477893
+          ],
+          "type": "car"
+        },
+        {
+          "color": [
+            255,
+            0,
+            0,
+            220
+          ],
+          "position": [
+            -120.66759341857838,
+            35.29400309100899
+          ],
+          "type": "car"
+        },
+        {
+          "color": [
+            255,
+            0,
+            0,
+            220
+          ],
+          "position": [
+            -120.66772986851325,
+            35.29380712027111
+          ],
+          "type": "car"
+        },
+        {
+          "color": [
+            255,
+            0,
+            0,
+            220
+          ],
+          "position": [
+            -120.66758930047732,
+            35.2941089731805
+          ],
+          "type": "car"
+        },
+        {
+          "color": [
+            255,
+            0,
+            0,
+            220
+          ],
+          "position": [
+            -120.66778906572486,
+            35.29389763567812
+          ],
+          "type": "car"
+        },
+        {
+          "color": [
+            255,
+            255,
+            0,
+            220
+          ],
+          "position": [
+            -120.66791568769409,
+            35.29402465173595
+          ],
+          "type": "bus"
+        },
+        {
+          "color": [
+            255,
+            140,
+            0,
+            220
+          ],
+          "position": [
+            -120.66771949034197,
+            35.29370218997562
+          ],
+          "type": "truck"
+        },
+        {
+          "color": [
+            255,
+            0,
+            0,
+            220
+          ],
+          "position": [
+            -120.66770244385103,
+            35.29386965004639
+          ],
+          "type": "car"
+        },
+        {
+          "color": [
+            255,
+            0,
+            0,
+            220
+          ],
+          "position": [
+            -120.66782443524849,
+            35.29419277368751
+          ],
+          "type": "car"
+        },
+        {
+          "color": [
+            255,
+            0,
+            0,
+            220
+          ],
+          "position": [
+            -120.66746913492685,
+            35.29400501981874
+          ],
+          "type": "car"
+        },
+        {
+          "color": [
+            255,
+            0,
+            0,
+            220
+          ],
+          "position": [
+            -120.66773620004247,
+            35.29377918160341
+          ],
+          "type": "car"
+        },
+        {
+          "color": [
+            255,
+            0,
+            0,
+            220
+          ],
+          "position": [
+            -120.66785719263058,
+            35.29393970274347
+          ],
+          "type": "car"
+        },
+        {
+          "color": [
+            255,
+            0,
+            0,
+            220
+          ],
+          "position": [
+            -120.66769182842441,
+            35.29377015329507
+          ],
+          "type": "car"
+        },
+        {
+          "color": [
+            255,
+            0,
+            0,
+            220
+          ],
+          "position": [
+            -120.6676978498887,
+            35.29374270219384
+          ],
+          "type": "car"
+        },
+        {
+          "color": [
+            255,
+            0,
+            0,
+            220
+          ],
+          "position": [
+            -120.66749285391202,
+            35.29410620043015
+          ],
+          "type": "car"
+        },
+        {
+          "color": [
+            255,
+            0,
+            0,
+            220
+          ],
+          "position": [
+            -120.66790110512662,
+            35.29409886833682
+          ],
+          "type": "car"
+        },
+        {
+          "color": [
+            255,
+            0,
+            0,
+            220
+          ],
+          "position": [
+            -120.66760428222884,
+            35.29419392364636
+          ],
+          "type": "car"
+        },
+        {
+          "color": [
+            255,
+            0,
+            0,
+            220
+          ],
+          "position": [
+            -120.66772912056754,
+            35.2936962159051
+          ],
+          "type": "car"
+        },
+        {
+          "color": [
+            255,
+            0,
+            0,
+            220
+          ],
+          "position": [
+            -120.66771690558076,
+            35.293925657059816
+          ],
+          "type": "car"
+        },
+        {
+          "color": [
+            255,
+            0,
+            0,
+            220
+          ],
+          "position": [
+            -120.66757236363051,
+            35.29418752585846
+          ],
+          "type": "car"
+        },
+        {
+          "color": [
+            255,
+            0,
+            0,
+            220
+          ],
+          "position": [
+            -120.66758839144191,
+            35.29405020679994
+          ],
+          "type": "car"
+        },
+        {
+          "color": [
+            255,
+            0,
+            0,
+            220
+          ],
+          "position": [
+            -120.66752986558063,
+            35.29417911612859
+          ],
+          "type": "car"
+        },
+        {
+          "color": [
+            255,
+            0,
+            0,
+            220
+          ],
+          "position": [
+            -120.66770944331316,
+            35.29391132013777
+          ],
+          "type": "car"
+        },
+        {
+          "color": [
+            255,
+            0,
+            0,
+            220
+          ],
+          "position": [
+            -120.66749675129236,
+            35.29417513500468
+          ],
+          "type": "car"
+        }
+      ],
+      "filled": true,
+      "getFillColor": "@@=color",
+      "getPosition": "@@=position",
+      "getRadius": 1,
+      "id": "dots",
+      "opacity": 0.95,
+      "pickable": true,
+      "radiusMaxPixels": 8,
+      "radiusMinPixels": 3,
+      "radiusScale": 1,
+      "stroked": false
+    }
+  ],
+  "mapProvider": "mapbox",
+  "mapStyle": "mapbox://styles/mapbox/dark-v11",
+  "views": [
+    {
+      "@@type": "MapView",
+      "controller": true
+    }
+  ]
+};
+    const tooltip = {'text': 'Type: {type}'};
+    const customLibraries = null;
+    const configuration = null;
+
+    const deckInstance = createDeck({
+            mapboxApiKey: 'pk.eyJ1IjoibWRyb2JlY2siLCJhIjoiY21oY2JwbGEzMTJzNTJtcHhya2kxdzZ0aSJ9.JDGBIKUjnQKTrX-Cmdnxxw',
+                  container,
+      jsonInput,
+      tooltip,
+      customLibraries,
+      configuration
+    });
+
+  </script>
+</html>

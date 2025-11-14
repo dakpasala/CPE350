@@ -17,12 +17,12 @@ import plotly.graph_objects as go
 load_dotenv()
 MAPBOX_TOKEN = os.getenv("MAPBOX_ACCESS_TOKEN") #load mapbox token from .env
 if not MAPBOX_TOKEN:
-    raise RuntimeError("❌ MAPBOX_ACCESS_TOKEN is missing in .env")
+    raise RuntimeError("MAPBOX_ACCESS_TOKEN is missing in .env")
 
 # Anchor (adjust to your site)
 ANCHOR = {"lat": 35.294289, "lon": -120.668143} #where map is centered
 
-MAP_STYLE = "mapbox://styles/mapbox/dark-v11" #can change
+MAP_STYLE = "mapbox://styles/mapbox/satellite-streets-v12" #can change
 DEFAULT_ZOOM = 18
 INTERVAL_MS = 100
 HOST = os.getenv("HOST", "127.0.0.1") #local host
@@ -117,8 +117,8 @@ def build_figure(center, lons, lats, colors, texts):
 # App
 # -----------------------------
 def main():
-    out_dir = Path("outputs")
-    candidates = sorted(out_dir.glob("output*.json"))
+    out_dir = Path("")
+    candidates = sorted(out_dir.glob("output3.json"))
     if not candidates:
         raise FileNotFoundError(f"No input found in {out_dir}/output*.json")
 
