@@ -1,454 +1,301 @@
 #!/usr/bin/env python3
 """
-incident_detection.py
-Adaptive per-location IsolationForest over motion + interaction features.
-Trains only on "normal" data (your CSV) to learn baseline traffic flow.
-
-Usage:
-    python3 incident_detection.py train [csv_path]
-    python3 incident_detection.py existing [csv_path]
+combined_statistics.py
+Final optimized multithreaded version.
+Pulls from MongoDB, expands mapPath, computes:
+  - Motion features (speed_mps, accel, jerk, heading, etc.)
+  - Interaction features (nn_dist_m, rel_speed_mps, heading_diff_deg,
+    closing_rate_mps, ttc_s)
+Uses ThreadPoolExecutor for parallel nearest-neighbor processing.
 """
 
-import os, sys, pickle, csv
-from datetime import datetime
+import argparse, configparser, math, numpy as np, pandas as pd, pymongo, concurrent.futures
+from sklearn.neighbors import BallTree
+from tqdm import tqdm
 
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-from sklearn.ensemble import IsolationForest
-from sklearn.preprocessing import StandardScaler
+# =========================
+# Constants
+# =========================
+R_EARTH_M = 6371000.0
+CONFIDENCE_THRESHOLD = 0.5
+MAX_WORKERS = max(2, int((__import__("os").cpu_count() or 4) * 0.75))  # use ~75% of cores
 
-# =============================================================================
-# Config
-# =============================================================================
+# =========================
+# Mongo connection
+# =========================
+def get_collection():
+    config = configparser.ConfigParser()
+    config.read("connection.ini")
+    dbUrl = config["DEFAULT"]["database"]
+    client = pymongo.MongoClient(dbUrl)
+    db = client["camera-counts"]
+    return db["vehicles"]
 
-DEFAULT_CSV = "combined_vehicle_stats_with_derivatives.csv"
-MODELS_DIR = "models"
-CUTOFF_QUANTILE = 0.00    # bottom 1% considered anomalous
-PERSIST_WINDOW = 3
-PERSIST_MIN = 2
-MIN_FRAME_POINTS = 5
-PAUSE_SEC = 0.35
+# =========================
+# Fetch data
+# =========================
+def fetch_vehicle_data(limit=None):
+    coll = get_collection()
+    projection = {
+        "_id": 1, "timestamp": 1, "location": 1, "detected_type": 1,
+        "speed": 1, "detection_certainty": 1, "zones": 1,
+        "time_elapsed": 1, "mapPath": 1
+    }
+    cursor = coll.find({}, projection)
+    if limit:
+        cursor = cursor.limit(int(limit))
+    data = list(cursor)
+    print(f"✅ Retrieved {len(data)} vehicle records.")
+    return data
 
-# corroboration thresholds
-NEAR_DIST_M = 8.0
-NEAR_HEADING_DIFF = 45.0
-NEAR_TTC_S = 3.0
+# =========================
+# Expand mapPath — FULLY FIXED VERSION
+# =========================
+def expand_map_paths(data):
+    rows = []
+    for doc in data:
 
-# sliding window config (for window-level anomaly detection)
-WINDOW_SIZE = 20      # number of frames in each window
-WINDOW_STEP = 5       # slide by 5 frames each time
-WINDOW_MIN_FRAMES = 10  # require anomalies in at least 10 frames in the window
+        base = {
+            "object_id": str(doc.get("_id")),
+            "timestamp": doc.get("timestamp"),
+            "location": doc.get("location"),
+            "detected_type": doc.get("detected_type"),
+            "speed": doc.get("speed"),
+            "certainty": doc.get("detection_certainty"),
+            "zones": doc.get("zones", []),
+            "time_elapsed": doc.get("time_elapsed", 0),
+        }
 
-# =============================================================================
-# Load CSV + scale lat/lon
-# =============================================================================
+        raw_path = doc.get("mapPath", [])
+        path = []
 
-def load_data(csv_path: str = DEFAULT_CSV) -> pd.DataFrame:
-    if not os.path.exists(csv_path):
-        raise FileNotFoundError(f"CSV not found: {csv_path}")
-    df = pd.read_csv(csv_path)
+        # --------------------------------------------
+        # CASE 1: Normal list of [lat, lon]
+        # --------------------------------------------
+        if isinstance(raw_path, list):
+            for entry in raw_path:
+                if isinstance(entry, (list, tuple)) and len(entry) == 2:
+                    lat, lon = entry
+                    path.append((lat, lon))
+
+                # dict form: {lat: ..., lon: ...}
+                elif isinstance(entry, dict) and "lat" in entry and "lon" in entry:
+                    path.append((entry["lat"], entry["lon"]))
+
+                # geojson-like: {"coordinates":[lon, lat]}
+                elif isinstance(entry, dict) and "coordinates" in entry:
+                    coords = entry["coordinates"]
+                    if isinstance(coords, (list, tuple)) and len(coords) == 2:
+                        path.append((coords[1], coords[0]))
+
+        # --------------------------------------------
+        # CASE 2: GeoJSON-style path object
+        # raw_path = {"coordinates": [[lon,lat], [lon,lat], ...]}
+        # --------------------------------------------
+        elif isinstance(raw_path, dict) and "coordinates" in raw_path:
+            coords_list = raw_path["coordinates"]
+            if isinstance(coords_list, list):
+                for coords in coords_list:
+                    if isinstance(coords, (list, tuple)) and len(coords) == 2:
+                        # GeoJSON uses lon,lat — convert to lat,lon
+                        path.append((coords[1], coords[0]))
+
+        # --------------------------------------------
+        # Build dataframe rows
+        # --------------------------------------------
+        if path:
+            for i, (lat, lon) in enumerate(path):
+                row = base.copy()
+                row["path_index"] = i
+                row["lat"] = float(lat)
+                row["lon"] = float(lon)
+                rows.append(row)
+        else:
+            # No valid path structure
+            row = base.copy()
+            row["path_index"] = np.nan
+            row["lat"] = np.nan
+            row["lon"] = np.nan
+            rows.append(row)
+
+    df = pd.DataFrame(rows)
+
+    # dtype cleanup
+    df["lat"] = pd.to_numeric(df["lat"], errors="coerce").astype("float32")
+    df["lon"] = pd.to_numeric(df["lon"], errors="coerce").astype("float32")
+    df["speed"] = pd.to_numeric(df["speed"], errors="coerce").astype("float32")
+    df["path_index"] = pd.to_numeric(df["path_index"], errors="coerce").astype("float32")
     df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
-    df = df.sort_values(["location", "timestamp"]).reset_index(drop=True)
-    print(f"✅ Loaded {len(df)} rows from {csv_path}")
+
+    print(f"🧩 Expanded mapPath → {len(df)} rows.")
     return df
 
+# =========================
+# Helpers
+# =========================
+def mph_to_mps(s): return pd.to_numeric(s, errors="coerce").fillna(0) * 0.44704
 
-def scale_per_location(df: pd.DataFrame):
+def bearing_deg(lat1, lon1, lat2, lon2):
+    lat1, lon1, lat2, lon2 = map(np.radians, [lat1, lon1, lat2, lon2])
+    dlon = lon2 - lon1
+    x = np.sin(dlon) * np.cos(lat2)
+    y = np.cos(lat1)*np.sin(lat2) - np.sin(lat1)*np.cos(lat2)*np.cos(dlon)
+    return (np.degrees(np.arctan2(x, y)) + 360.0) % 360.0
+
+def shortest_angle_diff_deg(a,b):
+    return ((a - b + 180.0) % 360.0) - 180.0
+
+# =========================
+# Motion Features
+# =========================
+def add_motion_features(df):
     df = df.copy()
-    bounds = {}
-    for loc, g in df.groupby("location"):
-        lat_min, lat_max = g["lat"].min(), g["lat"].max()
-        lon_min, lon_max = g["lon"].min(), g["lon"].max()
-        lat_rng = (lat_max - lat_min) if lat_max != lat_min else 1.0
-        lon_rng = (lon_max - lon_min) if lon_max != lon_min else 1.0
+    df.sort_values(["object_id", "timestamp", "path_index"], inplace=True)
 
-        idx = g.index
-        df.loc[idx, "lat_scaled"] = (g["lat"] - lat_min) / lat_rng
-        df.loc[idx, "lon_scaled"] = (g["lon"] - lon_min) / lon_rng
-        bounds[loc] = (lon_min, lon_max, lat_min, lat_max)
-    print("📍 Scaled latitude/longitude per location.")
-    return df, bounds
+    df["speed_mps"] = mph_to_mps(df["speed"])
+    df["is_confident"] = df["certainty"].fillna(0) > CONFIDENCE_THRESHOLD
 
+    dt = df.groupby("object_id")["time_elapsed"].diff().fillna(0.1)
+    dv = df.groupby("object_id")["speed_mps"].diff().fillna(0.0)
 
-# =============================================================================
-# Feature selection
-# =============================================================================
+    df["accel"] = (dv / dt.replace(0, np.nan)).fillna(0.0).astype("float32")
+    df["jerk"] = (df.groupby("object_id")["accel"].diff() / dt.replace(0, np.nan)).fillna(0.0).astype("float32")
 
-def _present(df, cols):
-    return [c for c in cols if c in df.columns]
+    lat_prev = df.groupby("object_id")["lat"].shift(1)
+    lon_prev = df.groupby("object_id")["lon"].shift(1)
 
-def get_feature_columns(df):
-    primary = [
-        "speed_mps", "accel", "jerk",
-        "d_heading_deg", "zone_change", "path_gap",
-        "nn_dist_m", "rel_speed_mps", "heading_diff_deg",
-        "closing_rate_mps", "ttc_s",
-        "lat_scaled", "lon_scaled",
+    df["heading_deg"] = bearing_deg(lat_prev, lon_prev, df["lat"], df["lon"]).fillna(0.0).astype("float32")
+    prev_heading = df.groupby("object_id")["heading_deg"].shift(1)
+
+    df["d_heading_deg"] = shortest_angle_diff_deg(df["heading_deg"], prev_heading).fillna(0.0).astype("float32")
+
+    prev_z = df.groupby("object_id")["zones"].shift(1)
+    df["zone_change"] = (prev_z.astype(str) != df["zones"].astype(str)).astype("int8")
+    df["path_gap"] = (df.groupby("object_id")["path_index"].diff().fillna(1) > 1).astype("int8")
+
+    return df
+
+# =========================
+# Interaction Features (Parallel)
+# =========================
+def compute_interaction_for_group(args):
+    loc, t, g_pos, lat, lon, spd, hdg, vx, vy = args
+    if len(g_pos) <= 1:
+        return None
+
+    lat_rad, lon_rad = lat[g_pos], lon[g_pos]
+    pts = np.column_stack([lat_rad, lon_rad])
+    tree = BallTree(pts, metric="haversine")
+    d_rad, nbr_idx = tree.query(pts, k=2)
+
+    nn_local = nbr_idx[:, 1]
+    nn_dist = (d_rad[:, 1] * R_EARTH_M).astype("float32")
+
+    sp_i = spd[g_pos]
+    rel_speed = np.abs(sp_i - sp_i[nn_local]).astype("float32")
+
+    hd_i = hdg[g_pos]
+    heading_diff = np.abs(((hd_i - hd_i[nn_local] + 180.0) % 360.0) - 180.0).astype("float32")
+
+    dlat = lat_rad - lat_rad[nn_local]
+    dlon = lon_rad - lon_rad[nn_local]
+
+    dx = dlon * np.cos((lat_rad + lat_rad[nn_local]) / 2.0) * R_EARTH_M
+    dy = dlat * R_EARTH_M
+
+    dist = np.hypot(dx, dy).astype("float32")
+    ux = np.divide(dx, dist, out=np.zeros_like(dist), where=dist > 0)
+    uy = np.divide(dy, dist, out=np.zeros_like(dist), where=dist > 0)
+
+    rvx = (vx[g_pos] - vx[g_pos][nn_local]).astype("float32")
+    rvy = (vy[g_pos] - vy[g_pos][nn_local]).astype("float32")
+
+    closing_rate = (rvx * ux + rvy * uy).astype("float32")
+
+    with np.errstate(divide="ignore", invalid="ignore"):
+        ttc = np.where(closing_rate < 0, -dist / closing_rate, np.inf).astype("float32")
+
+    return (g_pos, nn_dist, rel_speed, heading_diff, closing_rate, ttc)
+
+def add_interaction_features_parallel(df, sample_step=1):
+    df = df.copy()
+    n = len(df)
+    for c in ["nn_dist_m", "rel_speed_mps", "heading_diff_deg", "closing_rate_mps", "ttc_s"]:
+        df[c] = np.nan
+
+    lat = np.radians(df["lat"].astype(float).fillna(0.0).to_numpy())
+    lon = np.radians(df["lon"].astype(float).fillna(0.0).to_numpy())
+    spd = df["speed_mps"].astype(float).fillna(0.0).to_numpy()
+    hdg = df["heading_deg"].astype(float).fillna(0.0).to_numpy()
+    vx, vy = spd*np.cos(np.radians(hdg)), spd*np.sin(np.radians(hdg))
+
+    pos_of_label = pd.Series(np.arange(n), index=df.index)
+    group_iter = df.groupby(["location", "timestamp"], sort=False)
+
+    tasks = []
+    for (loc, t), g in group_iter:
+        if len(g) <= 1: continue
+        if np.random.randint(0, sample_step) != 0: continue
+        g_pos = pos_of_label.loc[g.index].to_numpy()
+        tasks.append((loc, t, g_pos, lat, lon, spd, hdg, vx, vy))
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
+        for result in tqdm(ex.map(compute_interaction_for_group, tasks), total=len(tasks), desc="Interactions"):
+            if result is None: continue
+            g_pos, nn_dist, rel_speed, heading_diff, closing_rate, ttc = result
+            df.iloc[g_pos, df.columns.get_loc("nn_dist_m")] = nn_dist
+            df.iloc[g_pos, df.columns.get_loc("rel_speed_mps")] = rel_speed
+            df.iloc[g_pos, df.columns.get_loc("heading_diff_deg")] = heading_diff
+            df.iloc[g_pos, df.columns.get_loc("closing_rate_mps")] = closing_rate
+            df.iloc[g_pos, df.columns.get_loc("ttc_s")] = ttc
+
+    return df
+
+# =========================
+# Save
+# =========================
+import os
+
+def save_results(df):
+    keep = [
+        "object_id","timestamp","location","detected_type",
+        "speed_mps","accel","jerk","heading_deg","d_heading_deg",
+        "nn_dist_m","closing_rate_mps","ttc_s","rel_speed_mps","heading_diff_deg",
+        "zone_change","path_gap","certainty","is_confident","lat","lon"
     ]
-    feats = _present(df, primary)
-    if not feats:
-        print("⚠️ Enriched features missing; falling back to base columns.")
-        feats = _present(df, ["speed", "lat_scaled", "lon_scaled"])
-    return feats
 
+    out_path = "combined_vehicle_stats_expanded.csv"
+    file_exists = os.path.exists(out_path)
 
-# =============================================================================
-# Drift + alignment helpers
-# =============================================================================
+    df = df[keep].dropna(how="all")
 
-def align_features(df, model_features):
-    """Ensure df columns match model expectations."""
-    aligned = df.copy()
-    for f in model_features:
-        if f not in aligned.columns:
-            aligned[f] = 0.0
-    aligned = aligned[model_features]
-    return aligned
-
-def detect_drift(scaler, new_X, threshold=0.25):
-    old_mean, old_std = scaler.mean_, scaler.scale_
-    new_mean, new_std = np.mean(new_X, axis=0), np.std(new_X, axis=0)
-    mean_drift = np.mean(np.abs(new_mean - old_mean) / (old_std + 1e-8))
-    std_drift = np.mean(np.abs(new_std - old_std) / (old_std + 1e-8))
-    drift = max(mean_drift, std_drift)
-    return drift > threshold, drift
-
-
-# =============================================================================
-# Train / Save / Load
-# =============================================================================
-
-def train_by_location(df: pd.DataFrame):
-    os.makedirs(MODELS_DIR, exist_ok=True)
-    models = {}
-    features = get_feature_columns(df)
-    if not features:
-        raise RuntimeError("No usable features to train on.")
-
-    print("\n🧠 Training IsolationForest per location...")
-    for loc, g in df.groupby("location"):
-        g = g[g["is_confident"].fillna(True)] if "is_confident" in g else g
-        X = g[features].replace([np.inf, -np.inf], np.nan).fillna(0.0).to_numpy(float)
-        if len(X) < 50:
-            print(f"   • Skipping {loc}: only {len(X)} samples.")
-            continue
-
-        scaler = StandardScaler().fit(X)
-        Xs = scaler.transform(X)
-
-        model = IsolationForest(
-            n_estimators=400,
-            contamination=0.001,
-            random_state=42,
-            n_jobs=-1
-        ).fit(Xs)
-
-        scores = model.decision_function(Xs)
-        cut = np.quantile(scores, CUTOFF_QUANTILE)
-        models[loc] = {"model": model, "scaler": scaler, "features": features, "cut": float(cut)}
-        print(f"   • {loc}: trained ({len(X)} pts), cutoff={cut:.5f}")
-
-    ts = datetime.now().strftime("%Y-%m-%d_%H-%M")
-    out_path = os.path.join(MODELS_DIR, f"models_by_loc_{ts}.pkl")
-    with open(out_path, "wb") as f:
-        pickle.dump(models, f)
-    print(f"\n💾 Models saved → {out_path}")
-    return models
-
-
-def load_latest_models():
-    if not os.path.exists(MODELS_DIR):
-        raise FileNotFoundError("❌ Models directory not found.")
-    files = [f for f in os.listdir(MODELS_DIR) if f.endswith(".pkl")]
-    if not files:
-        raise FileNotFoundError("❌ No saved models in /models.")
-    latest = max(files, key=lambda x: os.path.getmtime(os.path.join(MODELS_DIR, x)))
-    path = os.path.join(MODELS_DIR, latest)
-    with open(path, "rb") as f:
-        models = pickle.load(f)
-    print(f"📂 Loaded models from {path}")
-    return models
-
-
-def maybe_retrain_if_drifted(df, models):
-    updated = 0
-    for loc, g in df.groupby("location"):
-        if loc not in models:
-            print(f"🆕 New location {loc} → training new model.")
-            new_model = train_by_location(g)
-            if loc in new_model:
-                models[loc] = new_model[loc]
-                updated += 1
-            continue
-
-        entry = models[loc]
-        feats = entry["features"]
-        X = align_features(g, feats).replace([np.inf, -np.inf], np.nan).fillna(0.0).to_numpy(float)
-        Xs = entry["scaler"].transform(X)
-        drifted, val = detect_drift(entry["scaler"], Xs)
-        if drifted:
-            print(f"⚠️ Drift detected for {loc} (drift={val:.2f}) → retraining...")
-            retrained = train_by_location(g)
-            if loc in retrained:
-                models[loc] = retrained[loc]
-                updated += 1
-
-    if updated:
-        ts = datetime.now().strftime("%Y-%m-%d_%H-%M")
-        path = os.path.join(MODELS_DIR, f"models_adapted_{ts}.pkl")
-        with open(path, "wb") as f:
-            pickle.dump(models, f)
-        print(f"💾 {updated} model(s) updated → {path}")
-    return models
-
-
-# =============================================================================
-# Detection + Visualization
-# =============================================================================
-
-def _apply_persistence(frame, raw_anom):
-    frame = frame.copy()
-    frame["anom_raw"] = raw_anom.astype(int)
-    frame.sort_values(["object_id", "timestamp"], inplace=True)
-    streak = (
-        frame.groupby("object_id")["anom_raw"]
-        .rolling(PERSIST_WINDOW, min_periods=1)
-        .sum()
-        .reset_index(level=0, drop=True)
-        .values
+    df.to_csv(
+        out_path,
+        mode="a",
+        header=not file_exists,
+        index=False
     )
-    return (streak >= PERSIST_MIN).astype(int)
 
+    print(f"💾 {'Appended to' if file_exists else 'Created'} → {out_path}")
 
-def group_near_miss_events(frame):
-    """Cluster anomalies that occur close in space/time into near-miss events."""
-    events = []
-    if len(frame) < 2:
-        return events
-
-    anom_idx = frame.index[frame["final_anom"] == True].tolist()
-    if not anom_idx:
-        return events
-
-    for i in range(len(anom_idx)):
-        for j in range(i + 1, len(anom_idx)):
-            a, b = frame.loc[anom_idx[i]], frame.loc[anom_idx[j]]
-            if (
-                abs(a["lon_scaled"] - b["lon_scaled"]) < 0.02
-                and abs(a["lat_scaled"] - b["lat_scaled"]) < 0.02
-                and a.get("nn_dist_m", 99) < NEAR_DIST_M
-                and b.get("nn_dist_m", 99) < NEAR_DIST_M
-            ):
-                events.append((a["object_id"], b["object_id"]))
-    return events
-
-
-def log_detected_events(events, timestamp, location):
-    """Append grouped event detections to a CSV file."""
-    if not events:
-        return
-    out_file = "detected_events.csv"
-    header = ["timestamp", "location", "object_id_A", "object_id_B"]
-    file_exists = os.path.exists(out_file)
-    with open(out_file, "a", newline="") as f:
-        writer = csv.writer(f)
-        if not file_exists:
-            writer.writerow(header)
-        for a, b in events:
-            writer.writerow([timestamp, location, a, b])
-
-
-def detect_window_anomalies(timestamps, frame_anomaly_counts,
-                            window_size=WINDOW_SIZE,
-                            step=WINDOW_STEP,
-                            min_frames=WINDOW_MIN_FRAMES):
-    """
-    Sliding window detector over frame-level anomalies.
-
-    timestamps: iterable of timestamps for this location
-    frame_anomaly_counts: dict {timestamp -> num_anomalies_in_that_frame}
-    """
-    ts_sorted = sorted(timestamps)
-    window_events = []
-
-    if len(ts_sorted) < window_size:
-        return window_events
-
-    for i in range(0, len(ts_sorted) - window_size + 1, step):
-        window_ts = ts_sorted[i:i + window_size]
-        frames_with_anoms = sum(
-            1 for t in window_ts if frame_anomaly_counts.get(t, 0) > 0
-        )
-        if frames_with_anoms >= min_frames:
-            window_events.append((window_ts[0], window_ts[-1], frames_with_anoms))
-
-    return window_events
-
-
-def log_window_events(location, window_events,
-                      window_size=WINDOW_SIZE,
-                      step=WINDOW_STEP,
-                      min_frames=WINDOW_MIN_FRAMES):
-    """Log sliding-window anomaly events to CSV (silent, no console spam)."""
-    if not window_events:
-        return
-    out_file = "window_anomalies.csv"
-    header = [
-        "location",
-        "start_timestamp",
-        "end_timestamp",
-        "frames_with_anomalies",
-        "window_size",
-        "step",
-        "min_frames",
-    ]
-    file_exists = os.path.exists(out_file)
-    with open(out_file, "a", newline="") as f:
-        writer = csv.writer(f)
-        if not file_exists:
-            writer.writerow(header)
-        for start_ts, end_ts, frames_with_anoms in window_events:
-            writer.writerow([
-                location,
-                start_ts,
-                end_ts,
-                frames_with_anoms,
-                window_size,
-                step,
-                min_frames,
-            ])
-
-
-def detect_and_visualize(df, models, bounds):
-    timestamps = sorted(df["timestamp"].dropna().unique())
-    print(f"\n🕒 Processing {len(timestamps)} frames...\n")
-    plt.ion()
-    total_anomalies = 0
-
-    try:
-        for loc, subset in df.groupby("location"):
-            if loc not in models:
-                print(f"⚠️ No model for {loc}, skipping.")
-                continue
-
-            model = models[loc]["model"]
-            scaler = models[loc]["scaler"]
-            features = models[loc]["features"]
-            cut = models[loc]["cut"]
-
-            fig, ax = plt.subplots(figsize=(7, 6))
-            ax.set_title(f"{loc} — Anomaly Detection (red = anomaly)")
-            ax.set_xlim(0, 1)
-            ax.set_ylim(0, 1)
-            ax.grid(True)
-            scatter = ax.scatter([], [], c=[], alpha=0.8, s=36)
-            text = ax.text(0.02, 0.98, "", transform=ax.transAxes, va="top")
-
-            subset = subset.sort_values(["timestamp", "object_id"])
-
-            # Track anomalies per-frame for this location (for sliding-window analysis)
-            frame_anomaly_counts = {}
-
-            for t in timestamps:
-                if not plt.fignum_exists(fig.number):
-                    print("\n🟡 Plot window closed by user — exiting visualization early.")
-                    raise KeyboardInterrupt
-
-                frame = subset[subset["timestamp"] == t].copy()
-                if len(frame) < MIN_FRAME_POINTS:
-                    continue
-
-                X = align_features(frame, features).replace([np.inf, -np.inf], np.nan).fillna(0.0).to_numpy(float)
-                Xs = scaler.transform(X)
-                scores = model.decision_function(Xs)
-                raw_anom = (scores <= cut).astype(int)
-                persistent = _apply_persistence(frame, raw_anom)
-
-                near = np.zeros(len(frame), dtype=bool)
-                if {"nn_dist_m", "heading_diff_deg", "ttc_s"} <= set(frame.columns):
-                    nn = frame["nn_dist_m"].to_numpy(float)
-                    hd = frame["heading_diff_deg"].to_numpy(float)
-                    ttc = frame["ttc_s"].to_numpy(float)
-                    near = (nn < NEAR_DIST_M) & (hd < NEAR_HEADING_DIFF) & (ttc < NEAR_TTC_S)
-
-                final_anom = (persistent == 1) | ((raw_anom == 1) & near)
-                num_anom = int(final_anom.sum())
-                total_anomalies += num_anom
-                frame["final_anom"] = final_anom
-
-                # Record anomaly count for this timestamp (for window analysis)
-                frame_anomaly_counts[t] = num_anom
-
-                # 🚨 Group multi-vehicle near-miss events
-                events = group_near_miss_events(frame)
-                if events:
-                    print(f"🚨 {len(events)} potential event(s) at {t} in {loc}: {events}")
-                    log_detected_events(events, t, loc)
-
-                text.set_text(
-                    f"Timestamp: {pd.to_datetime(t)}\n"
-                    f"Anomalies: {num_anom}/{len(frame)}"
-                )
-
-                colors = np.where(final_anom, "red", "gray")
-                scatter.set_offsets(np.c_[frame["lon_scaled"], frame["lat_scaled"]])
-                scatter.set_color(colors)
-                plt.pause(PAUSE_SEC)
-
-            # After processing all frames for this location, run sliding-window analysis
-            if frame_anomaly_counts:
-                window_events = detect_window_anomalies(
-                    timestamps=list(frame_anomaly_counts.keys()),
-                    frame_anomaly_counts=frame_anomaly_counts,
-                    window_size=WINDOW_SIZE,
-                    step=WINDOW_STEP,
-                    min_frames=WINDOW_MIN_FRAMES,
-                )
-                # Silent logging to CSV only
-                log_window_events(loc, window_events)
-
-            plt.close(fig)
-
-    except KeyboardInterrupt:
-        print("\n🟡 Visualization interrupted by user (Ctrl-C or window close).")
-
-    except Exception as e:
-        print(f"\n⚠️ Visualization stopped unexpectedly: {type(e).__name__} — {e}")
-
-    finally:
-        try:
-            plt.close("all")
-            plt.ioff()
-        except Exception:
-            pass
-        print("\n✅ Visualization ended gracefully.")
-        print(f"📊 TOTAL anomalies detected across all frames: {total_anomalies}")
-
-
-# =============================================================================
+# =========================
 # Main
-# =============================================================================
-
-def main():
-    if len(sys.argv) < 2 or sys.argv[1] not in ("train", "existing"):
-        print("Usage: python3 incident_detection.py [train|existing] [optional_csv_path]")
-        sys.exit(1)
-
-    mode = sys.argv[1]
-    csv_path = sys.argv[2] if len(sys.argv) > 2 else DEFAULT_CSV
-
-    df = load_data(csv_path)
-    df, bounds = scale_per_location(df)
-
-    if mode == "train":
-        print("\n🚦 Treating all data as NORMAL baseline traffic.")
-        models = train_by_location(df)
-    else:
-        models = load_latest_models()
-
-    detect_and_visualize(df, models, bounds)
-
-
+# =========================
 if __name__ == "__main__":
-    main()
+    p = argparse.ArgumentParser()
+    p.add_argument("--limit", type=int, default=None)
+    p.add_argument("--no-interactions", action="store_true")
+    p.add_argument("--sample-step", type=int, default=1)
+    args = p.parse_args()
+
+    data = fetch_vehicle_data(limit=args.limit)
+    df = expand_map_paths(data)
+    df = add_motion_features(df)
+
+    if not args.no_interactions:
+        df = add_interaction_features_parallel(df, sample_step=args.sample_step)
+    else:
+        for c in ["nn_dist_m","rel_speed_mps","heading_diff_deg","closing_rate_mps","ttc_s"]:
+            df[c] = np.nan
+
+    save_results(df)
