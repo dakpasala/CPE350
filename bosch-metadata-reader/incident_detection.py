@@ -35,6 +35,11 @@ NEAR_DIST_M = 8.0
 NEAR_HEADING_DIFF = 45.0
 NEAR_TTC_S = 3.0
 
+# sliding window config (for window-level anomaly detection)
+WINDOW_SIZE = 20      # number of frames in each window
+WINDOW_STEP = 5       # slide by 5 frames each time
+WINDOW_MIN_FRAMES = 10  # require anomalies in at least 10 frames in the window
+
 # =============================================================================
 # Load CSV + scale lat/lon
 # =============================================================================
@@ -254,6 +259,67 @@ def log_detected_events(events, timestamp, location):
             writer.writerow([timestamp, location, a, b])
 
 
+def detect_window_anomalies(timestamps, frame_anomaly_counts,
+                            window_size=WINDOW_SIZE,
+                            step=WINDOW_STEP,
+                            min_frames=WINDOW_MIN_FRAMES):
+    """
+    Sliding window detector over frame-level anomalies.
+
+    timestamps: iterable of timestamps for this location
+    frame_anomaly_counts: dict {timestamp -> num_anomalies_in_that_frame}
+    """
+    ts_sorted = sorted(timestamps)
+    window_events = []
+
+    if len(ts_sorted) < window_size:
+        return window_events
+
+    for i in range(0, len(ts_sorted) - window_size + 1, step):
+        window_ts = ts_sorted[i:i + window_size]
+        frames_with_anoms = sum(
+            1 for t in window_ts if frame_anomaly_counts.get(t, 0) > 0
+        )
+        if frames_with_anoms >= min_frames:
+            window_events.append((window_ts[0], window_ts[-1], frames_with_anoms))
+
+    return window_events
+
+
+def log_window_events(location, window_events,
+                      window_size=WINDOW_SIZE,
+                      step=WINDOW_STEP,
+                      min_frames=WINDOW_MIN_FRAMES):
+    """Log sliding-window anomaly events to CSV (silent, no console spam)."""
+    if not window_events:
+        return
+    out_file = "window_anomalies.csv"
+    header = [
+        "location",
+        "start_timestamp",
+        "end_timestamp",
+        "frames_with_anomalies",
+        "window_size",
+        "step",
+        "min_frames",
+    ]
+    file_exists = os.path.exists(out_file)
+    with open(out_file, "a", newline="") as f:
+        writer = csv.writer(f)
+        if not file_exists:
+            writer.writerow(header)
+        for start_ts, end_ts, frames_with_anoms in window_events:
+            writer.writerow([
+                location,
+                start_ts,
+                end_ts,
+                frames_with_anoms,
+                window_size,
+                step,
+                min_frames,
+            ])
+
+
 def detect_and_visualize(df, models, bounds):
     timestamps = sorted(df["timestamp"].dropna().unique())
     print(f"\n🕒 Processing {len(timestamps)} frames...\n")
@@ -280,6 +346,9 @@ def detect_and_visualize(df, models, bounds):
             text = ax.text(0.02, 0.98, "", transform=ax.transAxes, va="top")
 
             subset = subset.sort_values(["timestamp", "object_id"])
+
+            # Track anomalies per-frame for this location (for sliding-window analysis)
+            frame_anomaly_counts = {}
 
             for t in timestamps:
                 if not plt.fignum_exists(fig.number):
@@ -308,6 +377,9 @@ def detect_and_visualize(df, models, bounds):
                 total_anomalies += num_anom
                 frame["final_anom"] = final_anom
 
+                # Record anomaly count for this timestamp (for window analysis)
+                frame_anomaly_counts[t] = num_anom
+
                 # 🚨 Group multi-vehicle near-miss events
                 events = group_near_miss_events(frame)
                 if events:
@@ -323,6 +395,18 @@ def detect_and_visualize(df, models, bounds):
                 scatter.set_offsets(np.c_[frame["lon_scaled"], frame["lat_scaled"]])
                 scatter.set_color(colors)
                 plt.pause(PAUSE_SEC)
+
+            # After processing all frames for this location, run sliding-window analysis
+            if frame_anomaly_counts:
+                window_events = detect_window_anomalies(
+                    timestamps=list(frame_anomaly_counts.keys()),
+                    frame_anomaly_counts=frame_anomaly_counts,
+                    window_size=WINDOW_SIZE,
+                    step=WINDOW_STEP,
+                    min_frames=WINDOW_MIN_FRAMES,
+                )
+                # Silent logging to CSV only
+                log_window_events(loc, window_events)
 
             plt.close(fig)
 
