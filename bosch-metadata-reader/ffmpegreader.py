@@ -184,10 +184,11 @@ def parse_element(event, elem):
 
 
 # -------------------------------------------------------
-# 3. XML STREAM PARSER (using output1.xml for now)
+# 3. XML STREAM PARSER
 # -------------------------------------------------------
 
-xml_path = "output1.xml"
+# xml_path = "../xmls/output11-18-228am.xml"
+xml_path = ""
 
 if not os.path.exists(xml_path):
     raise FileNotFoundError(f"XML file not found: {xml_path}")
