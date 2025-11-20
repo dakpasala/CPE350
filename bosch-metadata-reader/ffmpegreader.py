@@ -187,6 +187,7 @@ def parse_element(event, elem):
 # 3. XML STREAM PARSER
 # -------------------------------------------------------
 
+# for the name and stuff so we don't gotta worry one bitz
 # xml_path = "../xmls/output11-18-228am.xml"
 xml_path = ""
 
