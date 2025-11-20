@@ -1,64 +1,131 @@
-from typing import Dict
+#!/usr/bin/env python3
+"""
+collectData.py — CLEAN REWRITE
+
+Responsible for:
+  • Receiving CameraObject instances from ffmpegreader
+  • Generating per-frame documents
+  • Tracking objects across frames
+  • Storing EACH FRAME in MongoDB
+  • Maintaining lane counts, speeds, heatmaps, active objects
+
+This version:
+  • Uses composite _id = "<camera_object_id>_<iso_timestamp>"
+  • Does NOT wait for an object to disappear to push data
+  • Keeps the activeRoadObjects / recentQueue tracking for future analytics
+"""
+
+from typing import Dict, List, Union
 from camera_object import CameraObject
 
-# Two data structures:
-# One with the active objects(data existed in the last push, data exists in this push)
-# One with past objects(FIFO queue), upon the addition of a new object, the last object is pushed to the database
-recentQueueThreshold = 20
+# Maximum number of historical objects for heatmap/history
+RECENT_QUEUE_LIMIT = 200
 
-'''
-    data_push_function: The function to send the data to a database. Defaults to the standard function
-    To the data push, it returns a function containing:
-        - location
-        - start time
-        - time elapsed
-        - object type
-        - object certainty
-        - zone #
-        - speed
-'''
-def pushObjectData(objects, location, data_push_function, activeRoadObjects, recentQueue, currentBin, total_heatmaps):
-    for roadObject in objects:
-        searchID = str(roadObject["id"]) if type(roadObject) == dict else roadObject.id
 
-        # Check to see if the objects already exist
-        if searchID in activeRoadObjects:
-            # If they do, update their data
-            activeRoadObjects[searchID].add_data(roadObject)
-        # If they don't,
+def build_frame_document(obj: Union[CameraObject, dict], location: str) -> dict:
+    """
+    Convert a CameraObject (or old-style dict) into a MongoDB-ready document.
+    Ensures every frame produces a unique _id.
+    """
+
+    # --- Case 1: new pipeline using CameraObject instances ---
+    if isinstance(obj, CameraObject):
+        ts = obj.timestamp
+        ts_str = ts.isoformat()
+
+        doc = {
+            "id": obj.id,
+            "timestamp": ts,
+            "time_elapsed": 0,
+            "detected_type": obj.detectedType,
+            "detection_certainty": obj.detectionCertainty,
+            "zones": obj.zoneHistory,
+            "speed": obj.speed,
+            "mapPath": obj.mapPath,
+            "location": location,
+        }
+
+        # One document per (object, frame)
+        doc["_id"] = f"{obj.id}_{ts_str}"
+        return doc
+
+    # --- Case 2: backwards-compatible dict pipeline ---
+    if isinstance(obj, dict):
+        doc = dict(obj)  # shallow copy
+        doc["location"] = location
+
+        ts = doc.get("timestamp")
+        if hasattr(ts, "isoformat"):
+            ts_str = ts.isoformat()
         else:
-            # First check the recent queue to see if they are there. If they are, re-add them to the active queue and update their data
-            if searchID in recentQueue:
-                objectIndex = recentQueue.index(searchID)
-                returningObject = recentQueue.pop(objectIndex)
+            ts_str = str(ts)
 
-                returningObject.add_data(roadObject)
+        if "id" in doc and "_id" not in doc:
+            doc["_id"] = f"{doc['id']}_{ts_str}"
 
-                if activeRoadObjects[searchID] != None:
-                    raise ValueError
-                activeRoadObjects[searchID] = returningObject
-            # Otherwise, create a new instance
-            else:
-                # TODO: update
-                newObject = roadObject if type(roadObject) == CameraObject else CameraObject(searchID, roadObject["timestamp"], roadObject["type"], roadObject["lane"], roadObject["speed"], roadObject["idle"])
-                activeRoadObjects[searchID] = newObject
-            
+        return doc
 
-    # Grab all of the objects that were not modified this update, move them to the past queue
-    objectsToPush = []
-    for roadObject in activeRoadObjects:
-        if activeRoadObjects[roadObject].modified == 0:
-            objectsToPush.append(roadObject)
-        else: activeRoadObjects[roadObject].modified = 0
-
-    for roadObject in objectsToPush:
-        # If the past queue is full, move the oldest ones onto the database
-        tempObject = activeRoadObjects.pop(roadObject)
-        recentQueue.append(tempObject)
+    raise TypeError(f"Unsupported object type in build_frame_document: {type(obj)}")
 
 
-    while len(recentQueue) > recentQueueThreshold:
-        objectToAddToDB = recentQueue.pop(0)
-        roadObjectData = objectToAddToDB.get_data()
-        roadObjectData["location"] = location
-        data_push_function(roadObjectData, total_heatmaps, currentBin)
+def pushObjectData(
+    objects: List[CameraObject],
+    location: str,
+    data_push_function,
+    activeRoadObjects: Dict[str, CameraObject],
+    recentQueue: List[CameraObject],
+    currentBin,
+    total_heatmaps
+):
+    """
+    Main ingestion step. Called once per frame.
+
+    For each object in the frame:
+      • Generate unique per-frame document
+      • Push to MongoDB immediately via data_push_function
+      • Update tracking (activeRoadObjects)
+      • Maintain a bounded recentQueue for analytics / heatmaps
+    """
+
+    # 1. Insert each object (per-frame) into DB
+    for obj in objects:
+        obj_id = str(obj.id)
+
+        try:
+            doc = build_frame_document(obj, location)
+            # This calls add_count_mongo(roadObjectData, total_heatmaps, currentBin)
+            data_push_function(doc, total_heatmaps, currentBin)
+        except Exception as e:
+            # Don't kill the entire stream if one object is bad
+            print(f"⚠️ Data push failed for object {obj_id}: {e}")
+            continue
+
+        # 2. Tracking: update activeRoadObjects
+        if obj_id not in activeRoadObjects:
+            activeRoadObjects[obj_id] = obj
+        else:
+            # Merge new measurement into existing tracked object
+            activeRoadObjects[obj_id].add_data(obj)
+
+        # Mark that we saw this object in this frame
+        activeRoadObjects[obj_id].modified = 1
+
+        # 3. Add to recentQueue for analytics / heatmaps
+        recentQueue.append(obj)
+
+    # 4. Prune the recentQueue to keep it bounded
+    while len(recentQueue) > RECENT_QUEUE_LIMIT:
+        recentQueue.pop(0)
+
+    # 5. Cleanup: remove objects not seen in this frame
+    to_remove = []
+    for obj_id, tracked in activeRoadObjects.items():
+        if tracked.modified == 0:
+            # Not updated this frame → object left the scene
+            to_remove.append(obj_id)
+        else:
+            # Reset flag for next frame
+            tracked.modified = 0
+
+    for obj_id in to_remove:
+        activeRoadObjects.pop(obj_id, None)
