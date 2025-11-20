@@ -1,34 +1,37 @@
 #!/usr/bin/env python3
 
 import os
-import json
 import math
 from pathlib import Path
 from dotenv import load_dotenv
 
+import pandas as pd
 import dash
 from dash import Dash, dcc, html
 from dash.dependencies import Input, Output
 import plotly.graph_objects as go
 
+
 # -----------------------------
 # Config
 # -----------------------------
 load_dotenv()
-MAPBOX_TOKEN = os.getenv("MAPBOX_ACCESS_TOKEN") #load mapbox token from .env
+MAPBOX_TOKEN = os.getenv("MAPBOX_ACCESS_TOKEN")  # Mapbox token from .env
 if not MAPBOX_TOKEN:
     raise RuntimeError("MAPBOX_ACCESS_TOKEN is missing in .env")
 
-# Anchor (adjust to your site)
-ANCHOR = {"lat": 35.294289, "lon": -120.668143} #where map is centered
+# Only used as a last-resort fallback if we cannot compute a center
+ANCHOR = {"lat": 35.294099, "lon": -120.668143}
 
-MAP_STYLE = "mapbox://styles/mapbox/satellite-streets-v12" #can change
+MAP_STYLE   = "mapbox://styles/mapbox/satellite-streets-v12"
 DEFAULT_ZOOM = 18
-INTERVAL_MS = 100
-HOST = os.getenv("HOST", "127.0.0.1") #local host
+INTERVAL_MS  = 100
+MAX_ROWS     = 50000  # how many CSV rows to read at most
+
+HOST = os.getenv("HOST", "127.0.0.1")
 PORT = int(os.getenv("PORT", "8050"))
 
-COLOR_MAP = { #color coded
+COLOR_MAP = {
     "car":    "rgb(255,0,0)",
     "truck":  "rgb(255,140,0)",
     "person": "rgb(0,255,0)",
@@ -36,65 +39,125 @@ COLOR_MAP = { #color coded
 }
 DEFAULT_COLOR = "rgb(0,128,255)"
 
-# -----------------------------
-# Data loading & helpers
-# -----------------------------
-def load_frames_from_json(file_path: Path): #load in json file
-    with file_path.open("r", encoding="utf-8") as f:
-        return json.load(f)
 
-def obj_to_abs_latlon(obj): #calculate actual position based on center of graph
-    """Return (lat, lon) in absolute degrees."""
-    lat, lon = obj.get("lat"), obj.get("lon")
-    if lat is not None and lon is not None:
-        lat = float(lat); lon = float(lon)
-        if abs(lat) < 1 and abs(lon) < 1:
-            return ANCHOR["lat"] + lat, ANCHOR["lon"] + lon
-        return lat, lon
-    x = float(obj.get("x", 0.5)); y = float(obj.get("y", 0.5))
-    return ANCHOR["lat"] + (y - 0.5) * 0.001, ANCHOR["lon"] + (x - 0.5) * 0.001
+# -----------------------------
+# CSV loading & helpers
+# -----------------------------
+def _last4_hex(s: str) -> str:
+    """Return last 4 hex digits of a string (robust to non-hex chars)."""
+    if not isinstance(s, str):
+        s = str(s)
+    s = s.strip().lower()
+    s_hex = "".join(ch for ch in s if ch in "0123456789abcdef")
+    return s_hex[-4:] if len(s_hex) >= 4 else s_hex
+
+def load_frames_from_csv(file_path: Path, max_rows: int = MAX_ROWS):
+    """
+    Read CSV and return frames: list[ list[ {id_raw,id_short,type,speed,lat,lon} ] ],
+    grouped by 'timestamp'. Only first `max_rows` rows are read.
+    """
+    df = pd.read_csv(file_path, nrows=max_rows)
+
+    # Normalize column names
+    df.columns = [c.strip().lower() for c in df.columns]
+
+    # Rename to expected
+    if "detected_type" in df.columns:
+        df.rename(columns={"detected_type": "type"}, inplace=True)
+    if "object_id" in df.columns:
+        df.rename(columns={"object_id": "id"}, inplace=True)
+    if "speed_mps" in df.columns:
+        df.rename(columns={"speed_mps": "speed"}, inplace=True)
+
+    # Keep only needed columns
+    keep = ["id", "timestamp", "type", "speed", "lat", "lon"]
+    df = df[[c for c in keep if c in df.columns]]
+
+    # Drop rows without lat/lon; coerce to numeric
+    df = df.dropna(subset=["lat", "lon"])
+    df["lat"] = pd.to_numeric(df["lat"], errors="coerce")
+    df["lon"] = pd.to_numeric(df["lon"], errors="coerce")
+    if "speed" in df.columns:
+        df["speed"] = pd.to_numeric(df["speed"], errors="coerce").fillna(0.0)
+    df = df.dropna(subset=["lat", "lon"])
+
+    # Parse timestamps and sort chronologically (prevents “random dots” feel)
+    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+    df = df.dropna(subset=["timestamp"]).sort_values("timestamp")
+
+    # Build frames grouped by exact timestamp
+    frames = []
+    for ts, group in df.groupby("timestamp", sort=True):
+        objs = []
+        for _, row in group.iterrows():
+            raw_id = str(row["id"])
+            objs.append({
+                "id_raw": raw_id,
+                "id_short": _last4_hex(raw_id),
+                "type": str(row.get("type", "unknown")),
+                "speed": float(row.get("speed", 0.0)),
+                "lat": float(row["lat"]),
+                "lon": float(row["lon"]),
+            })
+        frames.append(objs)
+
+    print(f"✅ Loaded {len(frames)} frames from {len(df)} rows.")
+    return frames
 
 def frame_to_points(frame):
-    """Return lists: lons, lats, colors (strings), texts."""
-    lons, lats, colors, texts = [], [], [], []
+    """
+    Convert a frame (list of objs) to plotting arrays.
+    Returns: lons, lats, colors, texts, customdata([id_short, type, id_raw?]).
+    """
+    lons, lats, colors, texts, customdata = [], [], [], [], []
     for obj in frame:
-        lat, lon = obj_to_abs_latlon(obj)
+        try:
+            lat = float(obj.get("lat"))
+            lon = float(obj.get("lon"))
+        except (TypeError, ValueError):
+            continue
         if not (math.isfinite(lat) and math.isfinite(lon)):
             continue
+
         typ = str(obj.get("type", "unknown")).lower()
+        short_id = str(obj.get("id_short") or "")[-4:]
         color = COLOR_MAP.get(typ, DEFAULT_COLOR)
+
         lats.append(lat); lons.append(lon); colors.append(color)
-        texts.append(typ)
-    return lons, lats, colors, texts
+        texts.append(typ)                         # optional text label
+        customdata.append([short_id, typ])       # hover shows short id + type
+    return lons, lats, colors, texts, customdata
 
 def compute_center(frames):
+    """Compute mean center from all object lat/lon in all frames."""
     lats, lons = [], []
     for f in frames:
         for o in f:
-            lat, lon = obj_to_abs_latlon(o)
-            if math.isfinite(lat) and math.isfinite(lon):
-                lats.append(lat); lons.append(lon)
+            lat, lon = o.get("lat"), o.get("lon")
+            try:
+                latf, lonf = float(lat), float(lon)
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(latf) and math.isfinite(lonf):
+                lats.append(latf); lons.append(lonf)
     if lats and lons:
         return {"lat": sum(lats)/len(lats), "lon": sum(lons)/len(lons)}
     return dict(ANCHOR)
 
-# -----------------------------
-# Build initial figure
-# -----------------------------
-def build_figure(center, lons, lats, colors, texts):
-    fig = go.Figure()
 
+# -----------------------------
+# Plotly figure
+# -----------------------------
+def build_figure(center, lons, lats, colors, texts, customdata):
+    fig = go.Figure()
     fig.add_trace(go.Scattermapbox(
         lon=lons,
         lat=lats,
         mode="markers",
-        marker=dict(
-            size=7,                # dot size in pixels
-            opacity=0.95,
-            color=colors,
-        ),
+        marker=dict(size=7, opacity=0.95, color=colors),
         text=texts,
-        hovertemplate="Type: %{text}<extra></extra>",
+        customdata=customdata,
+        hovertemplate="ID: %{customdata[0]}<br>Type: %{customdata[1]}<extra></extra>",
         name="objects",
     ))
 
@@ -109,34 +172,38 @@ def build_figure(center, lons, lats, colors, texts):
         ),
         margin=dict(l=0, r=0, t=0, b=0),
         showlegend=False,
-        uirevision = "keep-view",
+        uirevision="keep-view",  # preserves user camera while animating
     )
     return fig
+
 
 # -----------------------------
 # App
 # -----------------------------
 def main():
-    out_dir = Path("")
-    candidates = sorted(out_dir.glob("output3.json"))
+    # Find your CSV
+    candidates = sorted(Path("").glob("combined_vehicle_stats_expandedNEW.csv"))
     if not candidates:
-        raise FileNotFoundError(f"No input found in {out_dir}/output*.json")
-
+        raise FileNotFoundError("No 'combined_vehicle_stats_with_derivatives.csv' found in current directory")
     latest = candidates[-1]
-    frames = load_frames_from_json(latest)
+
+    # Load frames
+    frames = load_frames_from_csv(latest, max_rows=MAX_ROWS)
     n_frames = len(frames)
     if not n_frames:
         raise ValueError(f"{latest.name} contained no frames.")
     print(f"Loaded {n_frames} frames from {latest.name}")
 
+    # Center camera from data
     center = compute_center(frames)
-    print(f"Centered map at lat={center['lat']:.6f}, lon={center['lon']:.6f}")
+    print(f"📍 Centered map at lat={center['lat']:.6f}, lon={center['lon']:.6f}")
 
-    # initial frame
-    lons0, lats0, colors0, texts0 = frame_to_points(frames[0])
+    # Initial frame
+    lons0, lats0, colors0, texts0, custom0 = frame_to_points(frames[0])
     print(f"Frame 0: {len(lats0)} points")
-    fig = build_figure(center, lons0, lats0, colors0, texts0)
+    fig = build_figure(center, lons0, lats0, colors0, texts0, custom0)
 
+    # Dash app
     app = Dash(__name__)
     app.title = "Mapbox Dots — Smooth Playback"
     app.playing = True
@@ -183,13 +250,14 @@ def main():
     )
     def update_frame(idx):
         idx = int(idx)
-        lons, lats, colors, texts = frame_to_points(frames[idx])
-        # just update data in the existing figure
+        lons, lats, colors, texts, cdata = frame_to_points(frames[idx])
         fig.update_traces(
             selector=dict(name="objects"),
             lon=lons, lat=lats,
             marker=dict(size=7, opacity=0.95, color=colors),
             text=texts,
+            customdata=cdata,
+            hovertemplate="ID: %{customdata[0]}<br>Type: %{customdata[1]}<extra></extra>",
         )
         return fig
 
@@ -214,6 +282,7 @@ def main():
 
     print(f"Running on: http://{HOST}:{PORT}")
     app.run(debug=True, host=HOST, port=PORT)
+
 
 if __name__ == "__main__":
     main()
