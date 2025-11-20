@@ -1,8 +1,19 @@
+#!/usr/bin/env python3
+"""
+FFMPEG METADATA XML STREAM PARSER (FINAL CLEAN VERSION + FRAME SKIPPING)
+
+- Parses Bosch XML metadata from a file (output1.xml for now) or a stream
+- Tracks multiple timestamps per ObjectId
+- Preserves frame-by-frame updates internally
+- Inserts into MongoDB *every Nth frame* (frame skipping)
+- Uses CameraObject attributes directly
+"""
+
 import xml.etree.ElementTree as ET
-import re
-from typing import Dict
 from collections import defaultdict
+from typing import Dict, List
 import sys
+import os
 
 from camera_object import CameraObject
 from pointSearch import whichLane, setLanePairsFromDBList
@@ -11,156 +22,202 @@ from mongointerface import add_count_mongo, get_camera_data
 from broadcastlatlon import connect_to_server, send_websocket_data
 
 # -------------------------------------------------------
-# 1. Initialize camera info + global vars
+# 1. Initialize camera info + globals
 # -------------------------------------------------------
-camera_info = get_camera_data(sys.argv[1])
+
+if len(sys.argv) < 2:
+    print("Usage: python ffmpegreader.py <camera_name>")
+    sys.exit(1)
+
+camera_name = sys.argv[1]
+camera_info = get_camera_data(camera_name)
+
+# Websocket for live visualization
 connect_to_server(8001)
 
 speedFactor = 2.237  # m/s → mph
 
 activeRoadObjects: Dict[str, CameraObject] = {}
-recentQueue: list[CameraObject] = []
+recentQueue: List[CameraObject] = []
+
 currentBin = {
     "counts": defaultdict(lambda: defaultdict(int)),
     "speeds": defaultdict(lambda: defaultdict(float)),
     "timestamp": 0,
     "heatmap": {}
 }
+
 lanes = setLanePairsFromDBList(camera_info["zones"])
-total_heatmaps = []
+
+total_heatmaps: list = []
+frameObjects: List[CameraObject] = []
+coordinateSet: list = []
+
 timestamp = None
 openObject = False
-frameObjects = []
 currentObject: CameraObject | None = None
-coordinateSet = []
+
+# ⭐ NEW: frame skipping counter
+frame_counter = 0
+FRAME_SKIP = 5   # save 1 out of every 5 frames
 
 
 # -------------------------------------------------------
-# 2. parse_element() — identical logic, safe fixes included
+# 2. PARSE LOGIC
 # -------------------------------------------------------
 def parse_element(event, elem):
-    global timestamp, openObject, currentObject, frameObjects, camera_info, coordinateSet, lanes
-    if elem.tag == "root":
-        return
+    """
+    Called for each <start>/<end> of tags by XMLPullParser.
+    Builds CameraObject instances and pushes full frames via pushObjectData.
+    """
+    global timestamp, openObject, currentObject
+    global frameObjects, coordinateSet
+    global frame_counter, lanes
 
     tag = elem.tag.split("}")[-1]
 
+    # ------------ FRAME ------------
     if tag == "Frame":
         if event == "start":
             raw_time = elem.attrib.get("UtcTime", "")
-            timestamp = raw_time.strip().replace("Z", "+00:00")
+            timestamp_str = raw_time.strip()
+
+            if timestamp_str.endswith("Z"):
+                timestamp_str = timestamp_str.replace("Z", "+00:00")
+
+            timestamp = timestamp_str
+
         elif event == "end":
-            if frameObjects:
-                try:
-                    # send_websocket_data(coordinateSet, camera_info["name"])
-                    coordinateSet = []
-                except Exception as error:
-                    print("Coordinate Livestream Error", error)
 
-                pushObjectData(
-                    frameObjects,
-                    camera_info["name"],
-                    data_push_function=add_count_mongo,
-                    activeRoadObjects=activeRoadObjects,
-                    recentQueue=recentQueue,
-                    currentBin=currentBin,
-                    total_heatmaps=total_heatmaps,
-                )
-                frameObjects = []
+            frame_counter += 1  # ⭐ increment frame index
 
-    elif tag == "Object":
+            # ⭐ ONLY SAVE EVERY Nth FRAME
+            if frame_counter % FRAME_SKIP == 0:
+
+                if frameObjects:
+                    try:
+                        # optional live visualization
+                        # send_websocket_data(coordinateSet, camera_info["name"])
+                        coordinateSet = []
+                    except Exception as e:
+                        print("Websocket error:", e)
+
+                    # INSERT FRAME INTO MONGODB (only every N frames)
+                    pushObjectData(
+                        frameObjects,
+                        camera_info["name"],
+                        data_push_function=add_count_mongo,
+                        activeRoadObjects=activeRoadObjects,
+                        recentQueue=recentQueue,
+                        currentBin=currentBin,
+                        total_heatmaps=total_heatmaps,
+                    )
+
+            # reset for next frame regardless of saving
+            frameObjects = []
+            return
+
+    # ------------ OBJECT ------------
+    if tag == "Object":
         if event == "start":
             openObject = True
-            currentObject = CameraObject(elem.attrib["ObjectId"], timestamp)
+            oid = elem.attrib.get("ObjectId")
+            currentObject = CameraObject(oid, timestamp)
+
         elif event == "end":
             openObject = False
-            elem.clear()
+
             if currentObject is not None:
+                coord = currentObject.getCurrentLocation() if hasattr(currentObject, "getCurrentLocation") else None
+                zone = currentObject.getCurrentZone() if hasattr(currentObject, "getCurrentZone") else None
+                obj_type = getattr(currentObject, "detectedType", None)
+
                 coordinateSet.append({
-                    "xy": currentObject.getCurrentLocation(),
-                    "zone": currentObject.getCurrentZone(),
-                    "type": currentObject.getDetectedType()
+                    "xy": coord,
+                    "zone": zone,
+                    "type": obj_type,
                 })
                 frameObjects.append(currentObject)
-            currentObject = None
 
-    elif openObject and currentObject is not None:
+            currentObject = None
+            elem.clear()
+            return
+
+    # ------------ INSIDE OBJECT ------------
+    if openObject and currentObject is not None:
+
+        # GEOLOCATION
         if tag == "GeoLocation":
             lat_str = elem.attrib.get("lat")
             lon_str = elem.attrib.get("lon")
-            if not lat_str or not lon_str:
-                return
-            try:
-                lat = float(lat_str) + float(camera_info["coordinates"][0])
-                lon = float(lon_str) + float(camera_info["coordinates"][1])
-                currentObject.setLatLon(lat, lon)
-                lane = whichLane((lat, lon), lanes)
-                currentObject.add_lane(lane)
-            except Exception as e:
-                print(f"⚠️ GeoLocation parse failed at {timestamp}: {e}")
+            if lat_str and lon_str:
+                try:
+                    lat = float(lat_str) + float(camera_info["coordinates"][0])
+                    lon = float(lon_str) + float(camera_info["coordinates"][1])
+                    currentObject.setLatLon(lat, lon)
 
+                    lane = whichLane((lat, lon), lanes)
+                    currentObject.add_lane(lane)
+
+                except Exception as e:
+                    print(f"⚠ GeoLocation parse failed ({timestamp}): {e}")
+
+        # TYPE + CONFIDENCE
         elif tag == "Type":
-            if "Likelihood" in elem.attrib and elem.text:
-                currentObject.setDetectedType(elem.text)
-                currentObject.setDetectionCertainty(float(elem.attrib["Likelihood"]))
+            if elem.text and "Likelihood" in elem.attrib:
+                try:
+                    currentObject.setDetectedType(elem.text)
+                    currentObject.setDetectionCertainty(float(elem.attrib["Likelihood"]))
+                except Exception as e:
+                    print(f"⚠ Type parse failed ({timestamp}): {e}")
 
+        # SPEED (m/s → mph)
         elif tag == "Speed":
-            if elem.text is None:
-                return
-            try:
-                speed_val = float(elem.text.strip()) if elem.text.strip() else 0.0
-                currentObject.setSpeed(speed_val * speedFactor)
-            except Exception as e:
-                print(f"⚠️ Speed parse failed at {timestamp}: {e}")
+            if elem.text:
+                try:
+                    speed_mps = float(elem.text.strip())
+                    currentObject.setSpeed(speed_mps * speedFactor)
+                except Exception as e:
+                    print(f"⚠ Speed parse failed ({timestamp}): {e}")
+
+        return
 
 
 # -------------------------------------------------------
-# 3. Read and parse XML (robust stream-safe version)
+# 3. XML STREAM PARSER
 # -------------------------------------------------------
-import os
-from xml.etree import ElementTree as ET
 
-xml_path = "../xmls/output11-8-350.xml"
+# for the name and stuff so we don't gotta worry one bitz
+# xml_path = "../xmls/output11-18-228am.xml"
+xml_path = ""
 
 if not os.path.exists(xml_path):
     raise FileNotFoundError(f"XML file not found: {xml_path}")
 
-# Set up parser and seen-frames tracker
 parser = ET.XMLPullParser(['start', 'end'])
-parser.feed('<root>')  # temp root for recovery
-processed_frames = set()
+parser.feed("<root>")
 
 chunk_count = 0
 
-with open(xml_path, "rb") as process:
-    for chunk in iter(lambda: process.read(4096), b""):
+with open(xml_path, "rb") as file:
+    for chunk in iter(lambda: file.read(4096), b""):
         chunk_count += 1
-
         try:
             parser.feed(chunk)
 
             for event, elem in parser.read_events():
                 try:
                     parse_element(event, elem)
-
-                    # Deduplicate by timestamp — avoids re-inserting same frame
-                    if timestamp and timestamp in processed_frames:
-                        continue
-                    if timestamp:
-                        processed_frames.add(timestamp)
-
-                except KeyError as ke:
-                    print(f"⚠️ Missing expected attribute {ke} on tag {elem.tag}")
                 except Exception as e:
-                    print(f"⚠️ parse_element error: {e}")
+                    print("Parse error:", e)
                 finally:
                     elem.clear()
 
-        except ET.ParseError as e:
-            # XML fragment is malformed — recover gracefully
-            print(f"⚠️ Skipping malformed chunk ({e})")
+        except ET.ParseError:
+            print("⚠ XML chunk malformed — recovering...")
             parser = ET.XMLPullParser(['start', 'end'])
-            parser.feed('<root>')
+            parser.feed("<root>")
             continue
 
-print(f"✅ Finished parsing {chunk_count} chunks, {len(processed_frames)} unique frames inserted.")
+print(f"\n✅ Finished parsing {chunk_count} chunks")
+print(f"📉 Frame skipping enabled: saved 1 out of every {FRAME_SKIP} frames")
