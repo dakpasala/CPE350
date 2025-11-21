@@ -189,7 +189,7 @@ def parse_element(event, elem):
 
 # for the name and stuff so we don't gotta worry one bitz
 # xml_path = "../xmls/output11-18-228am.xml"
-xml_path = ""
+# xml_path = "../xmls/output11-17-350pm.xml"
 
 if not os.path.exists(xml_path):
     raise FileNotFoundError(f"XML file not found: {xml_path}")
