@@ -8,9 +8,11 @@ from dotenv import load_dotenv
 import pandas as pd
 import dash
 from dash import Dash, dcc, html
-from dash.dependencies import Input, Output
+from dash.dependencies import Input, Output, State
 import plotly.graph_objects as go
 
+import numpy as np
+import pickle
 
 # -----------------------------
 # Config
@@ -23,7 +25,7 @@ if not MAPBOX_TOKEN:
 # Only used as a last-resort fallback if we cannot compute a center
 ANCHOR = {"lat": 35.294099, "lon": -120.668143}
 
-MAP_STYLE   = "mapbox://styles/mapbox/satellite-streets-v12"
+MAP_STYLE    = "mapbox://styles/mapbox/satellite-streets-v12"
 DEFAULT_ZOOM = 18
 INTERVAL_MS  = 100
 MAX_ROWS     = 50000  # how many CSV rows to read at most
@@ -38,6 +40,9 @@ COLOR_MAP = {
     "bus":    "rgb(255,255,0)",
 }
 DEFAULT_COLOR = "rgb(0,128,255)"
+
+MODEL_PATH = "bosh-metadata-reader/models/models_by_loc_2025-ll-21_10-29.pkl"
+ANOMALY_THRESH = float(os.getenv("ANOMALY_THRESH", "0.5"))
 
 
 # -----------------------------
@@ -81,12 +86,12 @@ def load_frames_from_csv(file_path: Path, max_rows: int = MAX_ROWS):
         df["speed"] = pd.to_numeric(df["speed"], errors="coerce").fillna(0.0)
     df = df.dropna(subset=["lat", "lon"])
 
-    # Parse timestamps and sort chronologically (prevents “random dots” feel)
+    # Parse timestamps and sort chronologically
     df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
     df = df.dropna(subset=["timestamp"]).sort_values("timestamp")
 
     # Build frames grouped by exact timestamp
-    frames = []
+    frames, timestamps = [], []
     for ts, group in df.groupby("timestamp", sort=True):
         objs = []
         for _, row in group.iterrows():
@@ -98,16 +103,18 @@ def load_frames_from_csv(file_path: Path, max_rows: int = MAX_ROWS):
                 "speed": float(row.get("speed", 0.0)),
                 "lat": float(row["lat"]),
                 "lon": float(row["lon"]),
+                "time": float(row["timestamp"].value) if pd.notna(row["timestamp"]) else None,
             })
         frames.append(objs)
+        timestamps.append(pd.Timestamp(ts))
 
-    print(f"✅ Loaded {len(frames)} frames from {len(df)} rows.")
-    return frames
+    print(f"Loaded {len(frames)} frames from {len(df)} rows.")
+    return frames, timestamps
 
 def frame_to_points(frame):
     """
     Convert a frame (list of objs) to plotting arrays.
-    Returns: lons, lats, colors, texts, customdata([id_short, type, id_raw?]).
+    Returns: lons, lats, colors, texts, customdata([id_short, type]).
     """
     lons, lats, colors, texts, customdata = [], [], [], [], []
     for obj in frame:
@@ -124,8 +131,8 @@ def frame_to_points(frame):
         color = COLOR_MAP.get(typ, DEFAULT_COLOR)
 
         lats.append(lat); lons.append(lon); colors.append(color)
-        texts.append(typ)                         # optional text label
-        customdata.append([short_id, typ])       # hover shows short id + type
+        texts.append(typ)
+        customdata.append([short_id, typ])
     return lons, lats, colors, texts, customdata
 
 def compute_center(frames):
@@ -181,14 +188,14 @@ def build_figure(center, lons, lats, colors, texts, customdata):
 # App
 # -----------------------------
 def main():
-    # Find your CSV
+    # Find your CSVdef
     candidates = sorted(Path("").glob("combined_vehicle_stats_expandedNEW.csv"))
     if not candidates:
-        raise FileNotFoundError("No 'combined_vehicle_stats_with_derivatives.csv' found in current directory")
+        raise FileNotFoundError("No 'combined_vehicle_stats_expandedNEW.csv' found in current directory")
     latest = candidates[-1]
 
     # Load frames
-    frames = load_frames_from_csv(latest, max_rows=MAX_ROWS)
+    frames, stamps = load_frames_from_csv(latest, max_rows=MAX_ROWS)
     n_frames = len(frames)
     if not n_frames:
         raise ValueError(f"{latest.name} contained no frames.")
@@ -196,21 +203,25 @@ def main():
 
     # Center camera from data
     center = compute_center(frames)
-    print(f"📍 Centered map at lat={center['lat']:.6f}, lon={center['lon']:.6f}")
+    print(f"Centered map at lat={center['lat']:.6f}, lon={center['lon']:.6f}")
 
     # Initial frame
     lons0, lats0, colors0, texts0, custom0 = frame_to_points(frames[0])
     print(f"Frame 0: {len(lats0)} points")
     fig = build_figure(center, lons0, lats0, colors0, texts0, custom0)
 
-    # Dash app
     app = Dash(__name__)
     app.title = "Mapbox Dots — Smooth Playback"
     app.playing = True
 
     app.layout = html.Div(
+        ### implement the time frames in this part. need to display what time it is somewhere on the scren
         [
             html.H3("Frame-by-frame Dots (Plotly Scattermapbox)"),
+            html.Div(
+                id="time-label",
+                style={"fontSize": "18px", "fontWeight": "600", "marginBottom": "8px"},
+            ),
             dcc.Graph(id="map", figure=fig, style={"height": "640px", "width": "100%"}),
             dcc.Slider(
                 0, max(n_frames - 1, 0),
@@ -221,6 +232,7 @@ def main():
                 tooltip={"always_visible": True},
             ),
             dcc.Interval(id="interval", interval=INTERVAL_MS, n_intervals=0),
+            dcc.Store(id="play-offset", data=0),  # stores where to start playback
             html.Div(
                 [
                     html.Button("▶️ Play", id="play-btn", n_clicks=0),
@@ -233,21 +245,26 @@ def main():
         style={"padding": "16px"},
     )
 
+    # Auto-advance the slider based on interval, honoring the stored offset
     @app.callback(
         Output("frame-slider", "value"),
         Input("interval", "n_intervals"),
+        State("play-offset", "data"),
         prevent_initial_call=True,
     )
-    def auto_advance(n):
+    
+    def auto_advance(n, offset):
         if app.playing and n_frames:
-            return n % n_frames
+            return (int(offset) + int(n)) % n_frames
         return dash.no_update
 
+    # Update the map figure when the frame changes (via slider or auto-advance)
     @app.callback(
-        Output("map", "figure"),
-        Input("frame-slider", "value"),
-        prevent_initial_call=True,
+            Output("map", "figure"),
+            Input("frame-slider", "value"),
+            prevent_initial_call=True,
     )
+    
     def update_frame(idx):
         idx = int(idx)
         lons, lats, colors, texts, cdata = frame_to_points(frames[idx])
@@ -260,25 +277,42 @@ def main():
             hovertemplate="ID: %{customdata[0]}<br>Type: %{customdata[1]}<extra></extra>",
         )
         return fig
+    
+    @app.callback(
+        Output("time-label", "children"),
+        Input("frame-slider", "value"),
+    )
+    def update_time_label(idx):
+        idx = int(idx)
+        if idx < 0 or idx >= len(stamps):
+            return "Time: --"
+        ts = stamps[idx]
+        return f"Time: {ts.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}"
 
+    # Play/Pause: on Play, set offset to current slider value and reset the interval counter
     @app.callback(
         Output("interval", "disabled"),
+        Output("interval", "n_intervals"),
+        Output("play-offset", "data"),
         Input("play-btn", "n_clicks"),
         Input("pause-btn", "n_clicks"),
+        State("frame-slider", "value"),
         prevent_initial_call=True,
     )
-    def toggle_play_pause(play_clicks, pause_clicks):
+    
+    def toggle_play_pause(play_clicks, pause_clicks, slider_val):
         ctx = dash.callback_context
         if not ctx.triggered:
-            return dash.no_update
+            return dash.no_update, dash.no_update, dash.no_update
         which = ctx.triggered[0]["prop_id"].split(".")[0]
         if which == "play-btn":
             app.playing = True
-            return False
+            # Resume from the frame the user slid to
+            return False, 0, int(slider_val)  # enable interval, reset counter, set offset
         if which == "pause-btn":
             app.playing = False
-            return True
-        return dash.no_update
+            return True, dash.no_update, dash.no_update  # disable interval, keep counters
+        return dash.no_update, dash.no_update, dash.no_update
 
     print(f"Running on: http://{HOST}:{PORT}")
     app.run(debug=True, host=HOST, port=PORT)
@@ -286,3 +320,24 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# Clear stagnant cars from parking lot? if time on screen < threshold (arbitrary) for N frames, remove
+# gets rid of watching the cars in the parking lot etc. Would have to determine a method given long traffic light times
+# perhaps based on speed and time on screen
+# 
+# Add some sort of time frame. Read the CSV entirely for its time frames and create an active one? 
+# Given Frames jump from time to time based on objectID, strip the CSV just for the time frames, organize it, and create one using that??
+#
+# Add anomaly detection coloring based on pre-trained model !!!! Important to begin implementing the ML model into Visuals.
+# FFMPEG is getting fixed but will still require time. 
+# frame pausing in instance of anomaly? Needs to be tested from the DB side first, but could be useful to pause on anomalies for better viewing.
+#
+# 
+#
+#
+#
+#
+#
+#
+
