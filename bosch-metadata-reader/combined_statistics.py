@@ -26,7 +26,7 @@ from tqdm import tqdm
 # =========================
 R_EARTH_M = 6371000.0
 CONFIDENCE_THRESHOLD = 0.5
-MAX_WORKERS = max(2, int((__import__("os").cpu_count() or 4) * 0.75))  # use ~75% of cores
+MAX_WORKERS = max(2, int((__import__("os").cpu_count() or 4) * 0.75))
 
 
 # =========================
@@ -69,16 +69,6 @@ def fetch_vehicle_data(limit=None):
 # Expand mapPath
 # =========================
 def expand_map_paths(data):
-    """
-    Expand each document's mapPath into per-point rows.
-
-    IMPORTANT FIX:
-    - MongoDB _id looks like "151759_2025-10-06T18:55:21.993000+00:00"
-    - We split that into:
-        object_id = "151759"
-        timestamp = parsed("2025-10-06T18:55:21.993000+00:00")
-    So all frames for the same vehicle share the same object_id.
-    """
     rows = []
     for doc in data:
         raw_id = str(doc.get("_id")).strip()
@@ -87,7 +77,6 @@ def expand_map_paths(data):
         ts = doc.get("timestamp")
         ts_parsed = pd.to_datetime(ts, errors="coerce")
 
-        # If _id has embedded timestamp, prefer that
         if "_" in raw_id:
             maybe_id, maybe_ts = raw_id.split("_", 1)
             ts_from_id = pd.to_datetime(maybe_ts, errors="coerce")
@@ -122,7 +111,6 @@ def expand_map_paths(data):
 
     df = pd.DataFrame(rows)
 
-    # enforce numeric types
     for c in ["lat", "lon", "speed"]:
         df[c] = pd.to_numeric(df[c], errors="coerce").astype("float32")
     df["path_index"] = pd.to_numeric(df["path_index"], errors="coerce").astype("float32")
@@ -140,10 +128,6 @@ def mph_to_mps(s):
 
 
 def bearing_deg(lat1, lon1, lat2, lon2):
-    """
-    Bearing from (lat1, lon1) -> (lat2, lon2) in degrees [0, 360).
-    Accepts pandas Series or numpy arrays.
-    """
     lat1, lon1, lat2, lon2 = map(
         np.radians, [lat1.to_numpy(), lon1.to_numpy(), lat2.to_numpy(), lon2.to_numpy()]
     )
@@ -154,220 +138,153 @@ def bearing_deg(lat1, lon1, lat2, lon2):
 
 
 def shortest_angle_diff_deg(a, b):
-    """
-    Smallest signed difference (a - b) in degrees in [-180, 180).
-    """
     return ((a - b + 180.0) % 360.0) - 180.0
 
 
 # =========================
-# Motion Features (with 1-second accel model)
+# Motion Features
 # =========================
 def add_motion_features(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Motion pipeline:
-      - Sorts by (object_id, timestamp, path_index)
-      - Computes speed_mps from haversine distance / real dt
-      - Falls back to Bosch speed when no movement detected
-      - Computes heading + heading change
-      - Computes acceleration & jerk over ~1-second windows per object
-        (recommended, physically realistic model)
-      - Adds zone_change, path_gap, is_confident
-    """
     df = df.copy()
-
-    # 1) Sort tracks
     df.sort_values(["object_id", "timestamp", "path_index"], inplace=True)
 
-    # 2) Ensure types
-    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
-    df["lat"] = pd.to_numeric(df["lat"], errors="coerce")
-    df["lon"] = pd.to_numeric(df["lon"], errors="coerce")
-
-    # 3) Per-object time delta (seconds)
     df["dt_s"] = (
         df.groupby("object_id")["timestamp"]
         .diff()
         .dt.total_seconds()
     )
-
-    # For first samples or bad diffs, give a small nonzero dt just to avoid zero-div
     df["dt_s"] = df["dt_s"].replace(0, np.nan).fillna(0.1)
 
-    # 4) Previous lat/lon per object
     df["lat_prev"] = df.groupby("object_id")["lat"].shift(1)
     df["lon_prev"] = df.groupby("object_id")["lon"].shift(1)
 
-    # 5) Haversine distance between consecutive points (meters)
     dist_m = np.zeros(len(df), dtype="float32")
-    valid_mask = (
+    valid = (
         df["lat_prev"].notna()
         & df["lon_prev"].notna()
         & df["lat"].notna()
         & df["lon"].notna()
     )
-    if valid_mask.any():
-        lat1 = np.radians(df.loc[valid_mask, "lat_prev"].to_numpy())
-        lon1 = np.radians(df.loc[valid_mask, "lon_prev"].to_numpy())
-        lat2 = np.radians(df.loc[valid_mask, "lat"].to_numpy())
-        lon2 = np.radians(df.loc[valid_mask, "lon"].to_numpy())
+
+    if valid.any():
+        lat1 = np.radians(df.loc[valid, "lat_prev"])
+        lon1 = np.radians(df.loc[valid, "lon_prev"])
+        lat2 = np.radians(df.loc[valid, "lat"])
+        lon2 = np.radians(df.loc[valid, "lon"])
 
         dlat = lat2 - lat1
         dlon = lon2 - lon1
-        a = np.sin(dlat / 2.0) ** 2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2.0) ** 2
-        c = 2.0 * np.arcsin(np.sqrt(a))
-        dist_m[valid_mask.to_numpy()] = (R_EARTH_M * c).astype("float32")
+        a = np.sin(dlat / 2) ** 2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2) ** 2
+        c = 2 * np.arcsin(np.sqrt(a))
+        dist_m[valid] = (R_EARTH_M * c).astype("float32")
 
     df["dist_m"] = dist_m
+    df["speed_mps"] = np.where(
+        df["dist_m"] > 0.01,
+        df["dist_m"] / df["dt_s"],
+        mph_to_mps(df["speed"])
+    ).astype("float32")
 
-    # 6) Speed (m/s) from movement
-    dt = df["dt_s"].to_numpy()
-    speed_from_move = np.zeros(len(df), dtype="float32")
-    np.divide(dist_m, dt, out=speed_from_move, where=(dt > 0))
-
-    # 7) Fallback to Bosch speed when no movement
-    speed_fallback = mph_to_mps(df["speed"]).to_numpy(dtype="float32")
-    df["speed_mps"] = np.where(speed_from_move > 0.01, speed_from_move, speed_fallback).astype(
-        "float32"
-    )
-
-    # 8) Heading + heading change
-    lat_prev = df.groupby("object_id")["lat"].shift(1)
-    lon_prev = df.groupby("object_id")["lon"].shift(1)
-    heading_vals = bearing_deg(
-        lat_prev.fillna(df["lat"]),
-        lon_prev.fillna(df["lon"]),
+    df["heading_deg"] = bearing_deg(
+        df.groupby("object_id")["lat"].shift(1).fillna(df["lat"]),
+        df.groupby("object_id")["lon"].shift(1).fillna(df["lon"]),
         df["lat"],
         df["lon"]
-    )
+    ).astype("float32")
 
-    df["heading_deg"] = pd.Series(heading_vals, index=df.index).fillna(0.0).astype("float32")
+    df["d_heading_deg"] = shortest_angle_diff_deg(
+        df["heading_deg"],
+        df.groupby("object_id")["heading_deg"].shift(1)
+    ).fillna(0).astype("float32")
 
-    prev_heading = df.groupby("object_id")["heading_deg"].shift(1)
-    df["d_heading_deg"] = (
-        shortest_angle_diff_deg(df["heading_deg"], prev_heading)
-        .fillna(0.0)
-        .astype("float32")
-    )
+    df["zone_change"] = (
+        df.groupby("object_id")["zones"].shift(1).astype(str) != df["zones"].astype(str)
+    ).astype("int8")
 
-    # 9) zone change + path gap
-    prev_z = df.groupby("object_id")["zones"].shift(1)
-    df["zone_change"] = (prev_z.astype(str) != df["zones"].astype(str)).astype("int8")
-    df["path_gap"] = (df.groupby("object_id")["path_index"].diff().fillna(1) > 1).astype("int8")
+    df["path_gap"] = (
+        df.groupby("object_id")["path_index"].diff().fillna(1) > 1
+    ).astype("int8")
 
-    # 10) confidence mask
-    df["is_confident"] = df["certainty"].fillna(0.0) > CONFIDENCE_THRESHOLD
+    df["is_confident"] = df["certainty"].fillna(0) > CONFIDENCE_THRESHOLD
 
-    # 11) Realistic acceleration model (1-second window per object)
     accel_blocks = []
     for oid, g in df.groupby("object_id"):
-        g2 = g.sort_values(["timestamp", "path_index"]).set_index("timestamp")
-
-        # Resample speed at 1-second intervals
-        if len(g2) == 0 or g2.index.isna().all():
-            # edge case: no valid timestamps
-            g2["accel"] = 0.0
-            g2["jerk"] = 0.0
-            accel_blocks.append(g2.reset_index())
-            continue
-
+        g2 = g.set_index("timestamp").sort_index()
         speed_resampled = g2["speed_mps"].resample("1S").mean().interpolate()
+        accel = speed_resampled.diff().fillna(0)
+        jerk = accel.diff().fillna(0)
 
-        # Acceleration = Δv over 1 second (units m/s^2)
-        accel = speed_resampled.diff().fillna(0.0)
+        g2["accel"] = accel.reindex(g2.index, method="nearest")
+        g2["jerk"] = jerk.reindex(g2.index, method="nearest")
+        accel_blocks.append(g2.reset_index())
 
-        # Jerk = Δ(accel) over 1 second (units m/s^3)
-        jerk = accel.diff().fillna(0.0)
-
-        # Map back to original timestamps: nearest 1-second sample
-        accel_at_orig = accel.reindex(g2.index, method="nearest")
-        jerk_at_orig = jerk.reindex(g2.index, method="nearest")
-
-        g2["accel"] = accel_at_orig.to_numpy(dtype="float32")
-        g2["jerk"] = jerk_at_orig.to_numpy(dtype="float32")
-
-        accel_blocks.append(g2.reset_index())  # bring timestamp back as a column
-
-    df = pd.concat(accel_blocks, ignore_index=True)
-    df.sort_values(["object_id", "timestamp", "path_index"], inplace=True)
-
-    return df
+    return pd.concat(accel_blocks).sort_values(["object_id", "timestamp", "path_index"])
 
 
 # =========================
-# Interaction Features (Parallel)
+# Interaction Features
 # =========================
 def compute_interaction_for_group(args):
     loc, t, g_pos, lat, lon, spd, hdg, vx, vy = args
     if len(g_pos) <= 1:
         return None
 
-    lat_rad, lon_rad = lat[g_pos], lon[g_pos]
-    pts = np.column_stack([lat_rad, lon_rad])
+    pts = np.column_stack([lat[g_pos], lon[g_pos]])
     tree = BallTree(pts, metric="haversine")
-    d_rad, nbr_idx = tree.query(pts, k=2)
-    nn_local = nbr_idx[:, 1]
-    nn_dist = (d_rad[:, 1] * R_EARTH_M).astype("float32")
+    d, idx = tree.query(pts, k=2)
 
-    sp_i = spd[g_pos]
-    rel_speed = np.abs(sp_i - sp_i[nn_local]).astype("float32")
+    nn = idx[:, 1]
+    dist = d[:, 1] * R_EARTH_M
+    rel_speed = np.abs(spd[g_pos] - spd[g_pos][nn])
+    heading_diff = np.abs(((hdg[g_pos] - hdg[g_pos][nn] + 180) % 360) - 180)
 
-    hd_i = hdg[g_pos]
-    heading_diff = np.abs(((hd_i - hd_i[nn_local] + 180.0) % 360.0) - 180.0).astype("float32")
+    dx = (lon[g_pos] - lon[g_pos][nn]) * np.cos(lat[g_pos]) * R_EARTH_M
+    dy = (lat[g_pos] - lat[g_pos][nn]) * R_EARTH_M
+    dist_xy = np.hypot(dx, dy)
 
-    dlat = lat_rad - lat_rad[nn_local]
-    dlon = lon_rad - lon_rad[nn_local]
-    dx = dlon * np.cos((lat_rad + lat_rad[nn_local]) / 2.0) * R_EARTH_M
-    dy = dlat * R_EARTH_M
-    dist = np.hypot(dx, dy).astype("float32")
+    ux = np.divide(dx, dist_xy, out=np.zeros_like(dx), where=dist_xy > 0)
+    uy = np.divide(dy, dist_xy, out=np.zeros_like(dy), where=dist_xy > 0)
 
-    ux = np.divide(dx, dist, out=np.zeros_like(dist), where=dist > 0)
-    uy = np.divide(dy, dist, out=np.zeros_like(dist), where=dist > 0)
+    rvx = vx[g_pos] - vx[g_pos][nn]
+    rvy = vy[g_pos] - vy[g_pos][nn]
+    closing_rate = rvx * ux + rvy * uy
 
-    rvx = (vx[g_pos] - vx[g_pos][nn_local]).astype("float32")
-    rvy = (vy[g_pos] - vy[g_pos][nn_local]).astype("float32")
-    closing_rate = (rvx * ux + rvy * uy).astype("float32")
+    ttc = np.where(closing_rate < 0, -dist_xy / closing_rate, np.inf)
 
-    with np.errstate(divide="ignore", invalid="ignore"):
-        ttc = np.where(closing_rate < 0, -dist / closing_rate, np.inf).astype("float32")
-
-    return (g_pos, nn_dist, rel_speed, heading_diff, closing_rate, ttc)
+    return g_pos, dist, rel_speed, heading_diff, closing_rate, ttc
 
 
 def add_interaction_features_parallel(df, sample_step=1):
     df = df.copy()
-    n = len(df)
     for c in ["nn_dist_m", "rel_speed_mps", "heading_diff_deg", "closing_rate_mps", "ttc_s"]:
         df[c] = np.nan
 
-    lat = np.radians(df["lat"].astype(float).fillna(0.0).to_numpy())
-    lon = np.radians(df["lon"].astype(float).fillna(0.0).to_numpy())
-    spd = df["speed_mps"].astype(float).fillna(0.0).to_numpy()
-    hdg = df["heading_deg"].astype(float).fillna(0.0).to_numpy()
-    vx, vy = spd * np.cos(np.radians(hdg)), spd * np.sin(np.radians(hdg))
+    lat = np.radians(df["lat"].fillna(0).to_numpy())
+    lon = np.radians(df["lon"].fillna(0).to_numpy())
+    spd = df["speed_mps"].fillna(0).to_numpy()
+    hdg = df["heading_deg"].fillna(0).to_numpy()
 
-    pos_of_label = pd.Series(np.arange(n), index=df.index)
-    group_iter = df.groupby(["location", "timestamp"], sort=False)
+    vx = spd * np.cos(np.radians(hdg))
+    vy = spd * np.sin(np.radians(hdg))
+
+    pos = pd.Series(np.arange(len(df)), index=df.index)
 
     tasks = []
-    for (loc, t), g in group_iter:
+    for (loc, t), g in df.groupby(["location", "timestamp"], sort=False):
         if len(g) <= 1:
             continue
         if np.random.randint(0, sample_step) != 0:
             continue
-        g_pos = pos_of_label.loc[g.index].to_numpy()
-        tasks.append((loc, t, g_pos, lat, lon, spd, hdg, vx, vy))
+        tasks.append((loc, t, pos.loc[g.index].to_numpy(), lat, lon, spd, hdg, vx, vy))
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
-        for result in tqdm(ex.map(compute_interaction_for_group, tasks), total=len(tasks), desc="Interactions"):
-            if result is None:
+        for r in tqdm(ex.map(compute_interaction_for_group, tasks), total=len(tasks)):
+            if r is None:
                 continue
-            g_pos, nn_dist, rel_speed, heading_diff, closing_rate, ttc = result
-            df.iloc[g_pos, df.columns.get_loc("nn_dist_m")] = nn_dist
-            df.iloc[g_pos, df.columns.get_loc("rel_speed_mps")] = rel_speed
-            df.iloc[g_pos, df.columns.get_loc("heading_diff_deg")] = heading_diff
-            df.iloc[g_pos, df.columns.get_loc("closing_rate_mps")] = closing_rate
-            df.iloc[g_pos, df.columns.get_loc("ttc_s")] = ttc
+            g_pos, *vals = r
+            df.iloc[g_pos, df.columns.get_indexer(
+                ["nn_dist_m", "rel_speed_mps", "heading_diff_deg", "closing_rate_mps", "ttc_s"]
+            )] = np.column_stack(vals)
 
     return df
 
@@ -376,46 +293,44 @@ def add_interaction_features_parallel(df, sample_step=1):
 # Save
 # =========================
 def save_results(df):
+    out = "combined_vehicle_stats_expandedNEW.csv"
+    exists = os.path.exists(out)
+
     keep = [
-        "object_id",
-        "timestamp",
-        "location",
-        "detected_type",
-        "speed_mps",
-        "accel",
-        "jerk",
-        "heading_deg",
-        "d_heading_deg",
-        "nn_dist_m",
-        "closing_rate_mps",
-        "ttc_s",
-        "rel_speed_mps",
-        "heading_diff_deg",
-        "zone_change",
-        "path_gap",
-        "certainty",
-        "is_confident",
-        "lat",
-        "lon",
+        "object_id", "timestamp", "location", "detected_type",
+        "speed_mps", "accel", "jerk", "heading_deg", "d_heading_deg",
+        "nn_dist_m", "closing_rate_mps", "ttc_s", "rel_speed_mps",
+        "heading_diff_deg", "zone_change", "path_gap",
+        "certainty", "is_confident", "lat", "lon"
     ]
 
-    out_path = "combined_vehicle_stats_expandedNEW.csv"
-    file_exists = os.path.exists(out_path)
-
-    df = df[keep].dropna(how="all")
-
-    df.to_csv(
-        out_path,
-        mode="a",  # append
-        header=not file_exists,
-        index=False,
+    df[keep].dropna(how="all").to_csv(
+        out, mode="a", header=not exists, index=False
     )
 
-    print(f"💾 {'Appended to' if file_exists else 'Created'} → {out_path}")
+    print(f"💾 {'Appended to' if exists else 'Created'} → {out}")
 
 
 # =========================
-# Main
+# API-SAFE PIPELINE (NEW)
+# =========================
+def run_feature_pipeline(limit=None, interactions=True, sample_step=1):
+    data = fetch_vehicle_data(limit)
+    df = expand_map_paths(data)
+    df = add_motion_features(df)
+
+    if interactions:
+        df = add_interaction_features_parallel(df, sample_step)
+    else:
+        for c in ["nn_dist_m", "rel_speed_mps", "heading_diff_deg", "closing_rate_mps", "ttc_s"]:
+            df[c] = np.nan
+
+    save_results(df)
+    return df
+
+
+# =========================
+# CLI ENTRYPOINT (UNCHANGED)
 # =========================
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
@@ -424,14 +339,8 @@ if __name__ == "__main__":
     p.add_argument("--sample-step", type=int, default=1)
     args = p.parse_args()
 
-    data = fetch_vehicle_data(limit=args.limit)
-    df = expand_map_paths(data)
-    df = add_motion_features(df)
-
-    if not args.no_interactions:
-        df = add_interaction_features_parallel(df, sample_step=args.sample_step)
-    else:
-        for c in ["nn_dist_m", "rel_speed_mps", "heading_diff_deg", "closing_rate_mps", "ttc_s"]:
-            df[c] = np.nan
-
-    save_results(df)
+    run_feature_pipeline(
+        limit=args.limit,
+        interactions=not args.no_interactions,
+        sample_step=args.sample_step
+    )
