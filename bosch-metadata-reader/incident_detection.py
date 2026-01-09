@@ -22,7 +22,7 @@ from sklearn.preprocessing import StandardScaler
 # Config
 # =============================================================================
 
-DEFAULT_CSV = "combined_vehicle_stats_expandedNEW.csv"
+DEFAULT_CSV = "combined_vehicle_stats_expandedNEW2.csv"
 MODELS_DIR = "models"
 CUTOFF_QUANTILE = 0.00
 PERSIST_WINDOW = 3
