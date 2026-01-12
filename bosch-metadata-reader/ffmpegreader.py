@@ -22,11 +22,20 @@ from mongointerface import add_count_mongo, get_camera_data
 from broadcastlatlon import connect_to_server, send_websocket_data
 
 # -------------------------------------------------------
-# GLOBALS (unchanged)
+# 1. Initialize camera info + globals
 # -------------------------------------------------------
 
+if len(sys.argv) < 2:
+    print("Usage: python ffmpegreader.py <camera_name>")
+    sys.exit(1)
+
+camera_name = sys.argv[1]
+camera_info = get_camera_data(camera_name)
+
+# Websocket for live visualization
+connect_to_server(8001)
+
 speedFactor = 2.237  # m/s → mph
-FRAME_SKIP = 5   # save 1 out of every 5 frames
 
 activeRoadObjects: Dict[str, CameraObject] = {}
 recentQueue: List[CameraObject] = []
@@ -38,6 +47,8 @@ currentBin = {
     "heatmap": {}
 }
 
+lanes = setLanePairsFromDBList(camera_info["zones"])
+
 total_heatmaps: list = []
 frameObjects: List[CameraObject] = []
 coordinateSet: list = []
@@ -45,40 +56,53 @@ coordinateSet: list = []
 timestamp = None
 openObject = False
 currentObject: CameraObject | None = None
+
+# ⭐ NEW: frame skipping counter
 frame_counter = 0
-lanes = None
-camera_info = None
+FRAME_SKIP = 5   # save 1 out of every 5 frames
 
 
 # -------------------------------------------------------
-# PARSE LOGIC (unchanged)
+# 2. PARSE LOGIC
 # -------------------------------------------------------
 def parse_element(event, elem):
+    """
+    Called for each <start>/<end> of tags by XMLPullParser.
+    Builds CameraObject instances and pushes full frames via pushObjectData.
+    """
     global timestamp, openObject, currentObject
     global frameObjects, coordinateSet
     global frame_counter, lanes
 
     tag = elem.tag.split("}")[-1]
 
+    # ------------ FRAME ------------
     if tag == "Frame":
         if event == "start":
             raw_time = elem.attrib.get("UtcTime", "")
             timestamp_str = raw_time.strip()
+
             if timestamp_str.endswith("Z"):
                 timestamp_str = timestamp_str.replace("Z", "+00:00")
+
             timestamp = timestamp_str
 
         elif event == "end":
-            frame_counter += 1
 
+            frame_counter += 1  # ⭐ increment frame index
+
+            # ⭐ ONLY SAVE EVERY Nth FRAME
             if frame_counter % FRAME_SKIP == 0:
+
                 if frameObjects:
                     try:
+                        # optional live visualization
                         # send_websocket_data(coordinateSet, camera_info["name"])
                         coordinateSet = []
                     except Exception as e:
                         print("Websocket error:", e)
 
+                    # INSERT FRAME INTO MONGODB (only every N frames)
                     pushObjectData(
                         frameObjects,
                         camera_info["name"],
@@ -89,9 +113,11 @@ def parse_element(event, elem):
                         total_heatmaps=total_heatmaps,
                     )
 
+            # reset for next frame regardless of saving
             frameObjects = []
             return
 
+    # ------------ OBJECT ------------
     if tag == "Object":
         if event == "start":
             openObject = True
@@ -117,7 +143,10 @@ def parse_element(event, elem):
             elem.clear()
             return
 
+    # ------------ INSIDE OBJECT ------------
     if openObject and currentObject is not None:
+
+        # GEOLOCATION
         if tag == "GeoLocation":
             lat_str = elem.attrib.get("lat")
             lon_str = elem.attrib.get("lon")
@@ -129,9 +158,11 @@ def parse_element(event, elem):
 
                     lane = whichLane((lat, lon), lanes)
                     currentObject.add_lane(lane)
+
                 except Exception as e:
                     print(f"⚠ GeoLocation parse failed ({timestamp}): {e}")
 
+        # TYPE + CONFIDENCE
         elif tag == "Type":
             if elem.text and "Likelihood" in elem.attrib:
                 try:
@@ -140,6 +171,7 @@ def parse_element(event, elem):
                 except Exception as e:
                     print(f"⚠ Type parse failed ({timestamp}): {e}")
 
+        # SPEED (m/s → mph)
         elif tag == "Speed":
             if elem.text:
                 try:
@@ -148,54 +180,44 @@ def parse_element(event, elem):
                 except Exception as e:
                     print(f"⚠ Speed parse failed ({timestamp}): {e}")
 
-
-# -------------------------------------------------------
-# ENTRYPOINT FUNCTION (NEW)
-# -------------------------------------------------------
-def start_ingest(camera_name: str, xml_path: str):
-    global lanes, camera_info
-
-    camera_info = get_camera_data(camera_name)
-    lanes = setLanePairsFromDBList(camera_info["zones"])
-
-    connect_to_server(8001)
-
-    if not os.path.exists(xml_path):
-        raise FileNotFoundError(f"XML file not found: {xml_path}")
-
-    parser = ET.XMLPullParser(['start', 'end'])
-    parser.feed("<root>")
-
-    chunk_count = 0
-
-    with open(xml_path, "rb") as file:
-        for chunk in iter(lambda: file.read(4096), b""):
-            chunk_count += 1
-            try:
-                parser.feed(chunk)
-                for event, elem in parser.read_events():
-                    try:
-                        parse_element(event, elem)
-                    except Exception as e:
-                        print("Parse error:", e)
-                    finally:
-                        elem.clear()
-            except ET.ParseError:
-                print("⚠ XML chunk malformed — recovering...")
-                parser = ET.XMLPullParser(['start', 'end'])
-                parser.feed("<root>")
-                continue
-
-    print(f"\n✅ Finished parsing {chunk_count} chunks")
-    print(f"📉 Frame skipping enabled: saved 1 out of every {FRAME_SKIP} frames")
+        return
 
 
 # -------------------------------------------------------
-# SCRIPT MODE (unchanged behavior)
+# 3. XML STREAM PARSER
 # -------------------------------------------------------
-if __name__ == "__main__":
-    if len(sys.argv) < 3:
-        print("Usage: python ffmpegreader.py <camera_name> <xml_path>")
-        sys.exit(1)
 
-    start_ingest(sys.argv[1], sys.argv[2])
+# for the name and stuff so we don't gotta worry one bitz
+# xml_path = "../xmls/output11-18-228am.xml"
+xml_path = ""
+
+if not os.path.exists(xml_path):
+    raise FileNotFoundError(f"XML file not found: {xml_path}")
+
+parser = ET.XMLPullParser(['start', 'end'])
+parser.feed("<root>")
+
+chunk_count = 0
+
+with open(xml_path, "rb") as file:
+    for chunk in iter(lambda: file.read(4096), b""):
+        chunk_count += 1
+        try:
+            parser.feed(chunk)
+
+            for event, elem in parser.read_events():
+                try:
+                    parse_element(event, elem)
+                except Exception as e:
+                    print("Parse error:", e)
+                finally:
+                    elem.clear()
+
+        except ET.ParseError:
+            print("⚠ XML chunk malformed — recovering...")
+            parser = ET.XMLPullParser(['start', 'end'])
+            parser.feed("<root>")
+            continue
+
+print(f"\n✅ Finished parsing {chunk_count} chunks")
+print(f"📉 Frame skipping enabled: saved 1 out of every {FRAME_SKIP} frames")
