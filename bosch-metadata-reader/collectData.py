@@ -129,3 +129,4 @@ def pushObjectData(
 
     for obj_id in to_remove:
         activeRoadObjects.pop(obj_id, None)
+        
