@@ -69,11 +69,7 @@ def fetch_vehicle_batch(batch_size):
         "mapPath": 1,
     }
 
-    cursor = (
-        coll.find({}, projection)
-        .sort("_id", 1)
-        .limit(batch_size)
-    )
+    cursor = coll.find({}, projection).limit(batch_size)
 
     return list(cursor)
 
@@ -234,7 +230,9 @@ def compute_interaction_for_group(args):
     rvy = vy[g_pos] - vy[g_pos][nn]
     closing_rate = rvx * ux + rvy * uy
 
-    ttc = np.where(closing_rate < 0, -dist_xy / closing_rate, np.inf)
+    ttc = np.full_like(dist_xy, np.inf, dtype="float64")
+    valid = closing_rate < 0
+    ttc[valid] = -dist_xy[valid] / closing_rate[valid]
 
     return g_pos, dist, rel_speed, heading_diff, closing_rate, ttc
 
@@ -289,10 +287,44 @@ def save_stats(df):
         coll.insert_many(records, ordered=False)
 
 
-def delete_raw(raw_docs):
+def delete_raw(raw_docs, chunk_size=5000):
+    coll = get_raw_collection()
     ids = [d["_id"] for d in raw_docs]
-    if ids:
-        get_raw_collection().delete_many({"_id": {"$in": ids}})
+
+    for i in range(0, len(ids), chunk_size):
+        chunk = ids[i:i + chunk_size]
+        coll.delete_many({"_id": {"$in": chunk}})
+
+    print(f"🧹 Deleted {len(ids)} raw docs in chunks")
+
+
+def load_all_combined_stats(limit: int = 10_000, location: str | None = None):
+    config = configparser.ConfigParser()
+    config.read("connection.ini")
+
+    client = pymongo.MongoClient(config["DEFAULT"]["database"])
+    db = client["camera-counts"]
+
+    query = {}
+    if location is not None:
+        query["location"] = location
+
+    cursor = (
+        db["combined_stats"]
+        .find(query)
+        .sort("timestamp", -1) 
+        .limit(limit)
+    )
+
+    data = list(cursor)
+    if not data:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(data).drop(columns=["_id"], errors="ignore")
+    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+
+    return df
+
 
 
 # =========================

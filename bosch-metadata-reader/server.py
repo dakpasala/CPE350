@@ -1,16 +1,16 @@
 from fastapi import FastAPI, BackgroundTasks
-from datetime import datetime, timedelta
+from datetime import datetime
 
 # =========================
-# Import your modules
+# Local imports (PURE)
 # =========================
 
-from ffmpegreader import start_ingest
-from combined_statistics import run_feature_pipeline
+from combined_statistics import run_batches, load_all_combined_stats
+# from ffmpegreader import start_ingest
 
 from incident_detection.engine import detect_incidents
 from incident_detection.models import load_latest_models
-from incident_detection.data import load_data, scale_per_location
+from incident_detection.data import scale_per_location
 
 # =========================
 # App init
@@ -21,43 +21,79 @@ app = FastAPI(
     version="1.0"
 )
 
-@app.post("/incidents/from-csv")
-def run_incidents_from_csv(
-    csv_path: str = "/Users/dakshesh/CPE 350/bosch-metadata-reader/combined_vehicle_stats_expandedNEW.csv"
-
-):
-    """
-    Debug / validation endpoint.
-    Runs incident detection directly on a CSV.
-    """
-
-    # 1) Load CSV → DataFrame
-    df = load_data(csv_path)
-    df, _ = scale_per_location(df)
-
-    # 2) Load trained models
-    models = load_latest_models()
-
-    # 3) Run detection
-    incidents = detect_incidents(df, models)
-
-    return {
-        "csv_path": csv_path,
-        "rows": len(df),
-        "incident_count": len(incidents),
-        "incidents": incidents,
-    }
-
 # =========================
 # Health
 # =========================
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "time": datetime.utcnow().isoformat()}
+    """
+    Sanity check endpoint.
+    Nothing should run when this is hit.
+    """
+    return {
+        "status": "ok",
+        "time": datetime.utcnow().isoformat()
+    }
 
 # =========================
-# Ingestion routes
+# Stats pipeline (manual trigger)
+# =========================
+
+@app.post("/stats/run")
+def run_combined_stats(
+    background_tasks: BackgroundTasks,
+    batch_size: int = 100_000
+):
+    """
+    Manually triggers combined_statistics batch processing.
+    Raw → combined_stats.
+    """
+    background_tasks.add_task(run_batches, batch_size)
+
+    return {
+        "status": "accepted",
+        "message": "Combined stats job started",
+        "batch_size": batch_size
+    }
+
+# =========================
+# Incident detection
+# =========================
+
+@app.post("/incidents/run")
+def run_incident_detection(limit: int = 10_000):
+    """
+    Runs incident detection on existing combined_stats.
+    NO feature computation happens here.
+    """
+    # 1) Load stats from Mongo
+    df = load_all_combined_stats(limit=limit)
+
+    if df.empty:
+        return {
+            "rows_analyzed": 0,
+            "count": 0,
+            "incidents": []
+        }
+
+    # 2) Apply ML preprocessing (scaling)
+    df, _ = scale_per_location(df)
+
+    # 3) Load models
+    models = load_latest_models()
+
+    # 4) Run detection
+    incidents = detect_incidents(df, models)
+
+    return {
+        "rows_analyzed": len(df),
+        "count": len(incidents),
+        "incidents": incidents
+    }
+
+# =========================
+# Ingestion
 # =========================
 
 @app.post("/ingest/start")
@@ -67,61 +103,13 @@ def start_camera_ingest(
     background: BackgroundTasks
 ):
     """
-    Starts ffmpeg XML ingestion in background.
+    Starts ffmpeg XML ingestion in the background.
+    NOTHING runs unless this endpoint is called.
     """
     background.add_task(start_ingest, camera, xml_path)
+
     return {
         "status": "ingestion started",
         "camera": camera,
         "xml_path": xml_path
-    }
-
-# =========================
-# Feature routes
-# =========================
-
-@app.post("/features/run")
-def run_features(limit: int | None = None):
-    """
-    Runs combined_statistics feature pipeline.
-    Returns summary only.
-    """
-    df = run_feature_pipeline(limit=limit)
-    return {
-        "rows_processed": len(df),
-        "columns": list(df.columns)
-    }
-
-# =========================
-# Incident routes
-# =========================
-
-@app.post("/incidents/run")
-def run_incident_detection(last_seconds: int = 30):
-    """
-    Runs incident detection on recent data.
-    Returns detected incidents as JSON.
-    """
-    # ⛔ placeholder: you will swap this for a Mongo window query
-    df = run_feature_pipeline()
-
-    models = load_latest_models()
-    incidents = detect_incidents(df, models)
-
-    return {
-        "count": len(incidents),
-        "incidents": incidents
-    }
-
-# =========================
-# Convenience route
-# =========================
-
-@app.get("/incidents/latest")
-def get_latest_incidents():
-    """
-    Stub for Mongo-backed query.
-    """
-    return {
-        "message": "Query latest incidents from Mongo (not wired yet)"
     }
