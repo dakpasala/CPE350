@@ -1,12 +1,12 @@
-from fastapi import FastAPI, BackgroundTasks
+from fastapi import FastAPI
 from datetime import datetime
+from typing import List, Dict
 
 # =========================
-# Local imports (PURE)
+# Local imports
 # =========================
 
-from combined_statistics import run_batches, load_all_combined_stats
-# from ffmpegreader import start_ingest
+from combined_statistics import process_raw_docs, save_stats, load_all_combined_stats
 
 from incident_detection.engine import detect_incidents
 from incident_detection.models import load_latest_models
@@ -27,34 +27,30 @@ app = FastAPI(
 
 @app.get("/health")
 def health():
-    """
-    Sanity check endpoint.
-    Nothing should run when this is hit.
-    """
     return {
         "status": "ok",
         "time": datetime.utcnow().isoformat()
     }
 
 # =========================
-# Stats pipeline (manual trigger)
+# 🔥 RAW INGESTION (ffmpegreader hits this)
 # =========================
 
-@app.post("/stats/run")
-def run_combined_stats(
-    background_tasks: BackgroundTasks,
-    batch_size: int = 100_000
-):
+@app.post("/raw-vehicles")
+def ingest_raw_vehicles(payload: List[Dict]):
     """
-    Manually triggers combined_statistics batch processing.
-    Raw → combined_stats.
+    Receives raw vehicle docs from ffmpegreader.
+    Runs feature extraction immediately.
+    Writes ONLY combined_stats to Mongo.
     """
-    background_tasks.add_task(run_batches, batch_size)
+    df = process_raw_docs(payload)
+
+    if not df.empty:
+        save_stats(df)
 
     return {
-        "status": "accepted",
-        "message": "Combined stats job started",
-        "batch_size": batch_size
+        "received": len(payload),
+        "processed_rows": len(df)
     }
 
 # =========================
@@ -67,7 +63,6 @@ def run_incident_detection(limit: int = 10_000):
     Runs incident detection on existing combined_stats.
     NO feature computation happens here.
     """
-    # 1) Load stats from Mongo
     df = load_all_combined_stats(limit=limit)
 
     if df.empty:
@@ -77,39 +72,12 @@ def run_incident_detection(limit: int = 10_000):
             "incidents": []
         }
 
-    # 2) Apply ML preprocessing (scaling)
     df, _ = scale_per_location(df)
-
-    # 3) Load models
     models = load_latest_models()
-
-    # 4) Run detection
     incidents = detect_incidents(df, models)
 
     return {
         "rows_analyzed": len(df),
         "count": len(incidents),
         "incidents": incidents
-    }
-
-# =========================
-# Ingestion
-# =========================
-
-@app.post("/ingest/start")
-def start_camera_ingest(
-    camera: str,
-    xml_path: str,
-    background: BackgroundTasks
-):
-    """
-    Starts ffmpeg XML ingestion in the background.
-    NOTHING runs unless this endpoint is called.
-    """
-    background.add_task(start_ingest, camera, xml_path)
-
-    return {
-        "status": "ingestion started",
-        "camera": camera,
-        "xml_path": xml_path
     }

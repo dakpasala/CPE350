@@ -18,7 +18,8 @@ import os
 from camera_object import CameraObject
 from pointSearch import whichLane, setLanePairsFromDBList
 from collectData import pushObjectData
-from mongointerface import add_count_mongo, get_camera_data
+from mongointerface import get_camera_data
+from send_to_api import send_to_api
 from broadcastlatlon import connect_to_server, send_websocket_data
 
 # -------------------------------------------------------
@@ -106,7 +107,7 @@ def parse_element(event, elem):
                     pushObjectData(
                         frameObjects,
                         camera_info["name"],
-                        data_push_function=add_count_mongo,
+                        data_push_function=send_to_api,
                         activeRoadObjects=activeRoadObjects,
                         recentQueue=recentQueue,
                         currentBin=currentBin,
