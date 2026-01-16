@@ -185,40 +185,67 @@ def parse_element(event, elem):
 
 
 # -------------------------------------------------------
-# 3. XML STREAM PARSER
+# 3. XML STREAM PARSER (LIVE RTSP URL VIA FFMPEG)
 # -------------------------------------------------------
 
-# for the name and stuff so we don't gotta worry one bitz
-# xml_path = "../xmls/output11-18-228am.xml"
-xml_path = "../xmls/output11-19-1235am.xml"
+import subprocess
+import re
 
-if not os.path.exists(xml_path):
-    raise FileNotFoundError(f"XML file not found: {xml_path}")
+# Build RTSP URL from camera_info
+rtsp_url = f'rtsp://{camera_info["username"]}:{camera_info["password"]}@{camera_info["ip_address"]}/rtsp_tunnel?p=0&line=1&inst=1&vcd=2'
+
+ffmpeg_cmd = (
+    f'ffmpeg -i "{rtsp_url}" '
+    f'-map 0:d -c copy -copy_unknown '
+    f'-loglevel fatal -f data -'
+)
 
 parser = ET.XMLPullParser(['start', 'end'])
 parser.feed("<root>")
 
-chunk_count = 0
+foundStart = False
+chunk_counter = 0
 
-with open(xml_path, "rb") as file:
-    for chunk in iter(lambda: file.read(4096), b""):
-        chunk_count += 1
-        try:
-            parser.feed(chunk)
+with subprocess.Popen(
+    ffmpeg_cmd,
+    stdout=subprocess.PIPE,
+    bufsize=0
+) as process:
 
-            for event, elem in parser.read_events():
-                try:
-                    parse_element(event, elem)
-                except Exception as e:
-                    print("Parse error:", e)
-                finally:
-                    elem.clear()
+    while True:
+        chunk = process.stdout.read1(4096)
 
-        except ET.ParseError:
-            print("⚠ XML chunk malformed — recovering...")
-            parser = ET.XMLPullParser(['start', 'end'])
-            parser.feed("<root>")
+        if not chunk:
             continue
 
-print(f"\n✅ Finished parsing {chunk_count} chunks")
-print(f"📉 Frame skipping enabled: saved 1 out of every {FRAME_SKIP} frames")
+        chunk_counter += 1
+
+        # Look for start of metadata packet
+        if not foundStart:
+            try:
+                decoded = chunk.decode("utf-8", errors="ignore")
+                match = re.search("<tt:MetadataStream", decoded)
+                if match:
+                    chunk = chunk[match.start():]
+                    foundStart = True
+            except Exception:
+                continue
+
+        if foundStart:
+            try:
+                parser.feed(chunk)
+
+                for event, elem in parser.read_events():
+                    try:
+                        parse_element(event, elem)
+                    except Exception as e:
+                        print("Parse error:", e)
+                    finally:
+                        elem.clear()
+
+            except ET.ParseError:
+                # Recover from broken XML packets
+                print("⚠ XML malformed — resetting parser")
+                foundStart = False
+                parser = ET.XMLPullParser(['start', 'end'])
+                parser.feed("<root>")
