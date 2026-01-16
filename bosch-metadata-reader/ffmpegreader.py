@@ -19,8 +19,8 @@ from camera_object import CameraObject
 from pointSearch import whichLane, setLanePairsFromDBList
 from collectData import pushObjectData
 from mongointerface import get_camera_data
-from send_to_api import send_to_api
 from broadcastlatlon import connect_to_server, send_websocket_data
+from send_to_api import send_to_api
 
 # -------------------------------------------------------
 # 1. Initialize camera info + globals
@@ -190,7 +190,7 @@ def parse_element(event, elem):
 
 # for the name and stuff so we don't gotta worry one bitz
 # xml_path = "../xmls/output11-18-228am.xml"
-xml_path = ""
+xml_path = "../xmls/output11-19-1235am.xml"
 
 if not os.path.exists(xml_path):
     raise FileNotFoundError(f"XML file not found: {xml_path}")
