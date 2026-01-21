@@ -192,13 +192,21 @@ import subprocess
 import re
 
 # Build RTSP URL from camera_info
-rtsp_url = f'rtsp://{camera_info["username"]}:{camera_info["password"]}@{camera_info["ip_address"]}/rtsp_tunnel?p=0&line=1&inst=1&vcd=2'
+rtsp_url = f'rtsp://{camera_info["url"]}/rtsp_tunnel?p=0&line=1&inst=1&vcd=2'
 
-ffmpeg_cmd = (
-    f'ffmpeg -i "{rtsp_url}" '
-    f'-map 0:d -c copy -copy_unknown '
-    f'-loglevel fatal -f data -'
-)
+FFMPEG_PATH = r"C:\Users\sammu\Downloads\ffmpeg-2026-01-19-git-43dbc011fa-full_build\bin\ffmpeg.exe"
+
+ffmpeg_cmd = [
+    FFMPEG_PATH,
+    "-i", rtsp_url,
+    "-map", "0:d",
+    "-c", "copy",
+    "-copy_unknown",
+    "-loglevel", "fatal",
+    "-f", "data",
+    "-"
+]
+
 
 parser = ET.XMLPullParser(['start', 'end'])
 parser.feed("<root>")
@@ -213,7 +221,7 @@ with subprocess.Popen(
 ) as process:
 
     while True:
-        chunk = process.stdout.read1(4096)
+        chunk = process.stdout.read(4096)
 
         if not chunk:
             continue
