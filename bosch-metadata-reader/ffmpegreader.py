@@ -26,6 +26,9 @@ from send_to_api import send_to_api
 # 1. Initialize camera info + globals
 # -------------------------------------------------------
 
+import platform
+import shutil
+
 if len(sys.argv) < 2:
     print("Usage: python ffmpegreader.py <camera_name>")
     sys.exit(1)
@@ -194,7 +197,15 @@ import re
 # Build RTSP URL from camera_info
 rtsp_url = f'rtsp://{camera_info["url"]}/rtsp_tunnel?p=0&line=1&inst=1&vcd=2'
 
-FFMPEG_PATH = r"C:\Users\sammu\Downloads\ffmpeg-2026-01-19-git-43dbc011fa-full_build\bin\ffmpeg.exe"
+if platform.system() == "Windows":
+    FFMPEG_PATH = r"C:\Users\sammu\Downloads\ffmpeg-2026-01-19-git-43dbc011fa-full_build\bin\ffmpeg.exe"
+else:
+    FFMPEG_PATH = shutil.which("ffmpeg")
+
+    if FFMPEG_PATH is None:
+        raise RuntimeError(
+            "ffmpeg not found. Install it with `brew install ffmpeg` on macOS."
+        )
 
 ffmpeg_cmd = [
     FFMPEG_PATH,

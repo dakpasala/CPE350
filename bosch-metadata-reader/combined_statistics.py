@@ -172,6 +172,13 @@ def add_motion_features(df):
     c = 2 * np.arcsin(np.sqrt(a))
     dist_m = R_EARTH_M * c
 
+    # ---- SAFETY: ensure speed_mps always exists ----
+    if "speed_mps" not in df.columns:
+        df["speed_mps"] = 0.0
+    else:
+        df["speed_mps"] = df["speed_mps"].fillna(0.0)
+
+
     df["speed_mps"] = np.where(
         (dist_m > 0.5) & (df["dt_s"] > 0),
         dist_m / df["dt_s"],
@@ -253,6 +260,18 @@ def compute_interaction_for_group(args):
 
 
 def add_interaction_features(df):
+    # ---- EARLY EXIT: not enough data ----
+    if df.empty or "speed_mps" not in df.columns:
+        for c in [
+            "nn_dist_m",
+            "rel_speed_mps",
+            "heading_diff_deg",
+            "closing_rate_mps",
+            "ttc_s",
+        ]:
+            df[c] = np.nan
+        return df
+
     for c in ["nn_dist_m", "rel_speed_mps", "heading_diff_deg", "closing_rate_mps", "ttc_s"]:
         df[c] = np.nan
 

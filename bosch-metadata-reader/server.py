@@ -124,7 +124,12 @@ def ingest_raw_vehicles(payload: List[Dict]):
         # -------------------------
         # Feature extraction
         # -------------------------
-        df = process_raw_docs(buffered_payload)
+        try:
+            df = process_raw_docs(buffered_payload)
+        except KeyError as e:
+            print(f"⚠ Feature computation skipped: {e}")
+            continue
+
 
         if df.empty:
             continue
