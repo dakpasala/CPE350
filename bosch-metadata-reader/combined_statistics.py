@@ -29,6 +29,9 @@ R_EARTH_M = 6371000.0
 CONFIDENCE_THRESHOLD = 0.5
 MAX_WORKERS = max(2, int((os.cpu_count() or 4) * 0.75))
 
+MIN_POINTS_PER_OBJECT = 3      # ⭐ NEW: minimum trajectory length
+TIME_BUCKET = "1S"             # ⭐ NEW: timestamp alignment for livestream
+
 
 # =========================
 # Mongo helpers
@@ -118,6 +121,8 @@ def expand_map_paths(data):
     for c in ["lat", "lon", "speed", "path_index"]:
         df[c] = pd.to_numeric(df[c], errors="coerce")
 
+    df["ts_bucket"] = df["timestamp"].dt.floor(TIME_BUCKET)  # ⭐ NEW
+
     return df
 
 
@@ -125,7 +130,7 @@ def expand_map_paths(data):
 # Motion features
 # =========================
 def mph_to_mps(s):
-    return pd.to_numeric(s, errors="coerce").fillna(0) * 0.44704
+    return pd.to_numeric(s, errors="coerce") * 0.44704
 
 
 def bearing_deg(lat1, lon1, lat2, lon2):
@@ -143,8 +148,15 @@ def shortest_angle_diff_deg(a, b):
 def add_motion_features(df):
     df = df.sort_values(["object_id", "timestamp", "path_index"]).copy()
 
+    # ⭐ NEW: gate motion features
+    counts = df.groupby("object_id")["timestamp"].transform("count")
+    df = df[counts >= MIN_POINTS_PER_OBJECT]
+
+    if df.empty:
+        return df
+
     df["dt_s"] = df.groupby("object_id")["timestamp"].diff().dt.total_seconds()
-    df["dt_s"] = df["dt_s"].replace(0, np.nan).fillna(0.1)
+    df["dt_s"] = df["dt_s"].replace(0, np.nan)   # ⭐ CHANGED (no fake 0.1)
 
     df["lat_prev"] = df.groupby("object_id")["lat"].shift(1)
     df["lon_prev"] = df.groupby("object_id")["lon"].shift(1)
@@ -160,7 +172,11 @@ def add_motion_features(df):
     c = 2 * np.arcsin(np.sqrt(a))
     dist_m = R_EARTH_M * c
 
-    df["speed_mps"] = np.where(dist_m > 0.01, dist_m / df["dt_s"], mph_to_mps(df["speed"]))
+    df["speed_mps"] = np.where(
+        (dist_m > 0.5) & (df["dt_s"] > 0),
+        dist_m / df["dt_s"],
+        mph_to_mps(df["speed"])
+    )
 
     df["heading_deg"] = bearing_deg(
         df["lat_prev"].fillna(df["lat"]),
@@ -172,7 +188,7 @@ def add_motion_features(df):
     df["d_heading_deg"] = shortest_angle_diff_deg(
         df["heading_deg"],
         df.groupby("object_id")["heading_deg"].shift(1)
-    ).fillna(0)
+    )
 
     df["zone_change"] = (
         df.groupby("object_id")["zones"].shift(1).astype(str) != df["zones"].astype(str)
@@ -182,19 +198,21 @@ def add_motion_features(df):
         df.groupby("object_id")["path_index"].diff().fillna(1) > 1
     ).astype(int)
 
-    df["is_confident"] = df["certainty"].fillna(0) > CONFIDENCE_THRESHOLD
+    df["is_confident"] = df["certainty"] > CONFIDENCE_THRESHOLD
 
     accel_blocks = []
     for _, g in df.groupby("object_id"):
+        if len(g) < MIN_POINTS_PER_OBJECT:
+            continue
         g = g.set_index("timestamp").sort_index()
         spd = g["speed_mps"].resample("1S").mean().interpolate()
-        accel = spd.diff().fillna(0)
-        jerk = accel.diff().fillna(0)
-        g["accel"] = accel.reindex(g.index, method="nearest")
-        g["jerk"] = jerk.reindex(g.index, method="nearest")
+        accel = spd.diff()
+        jerk = accel.diff()
+        g["accel"] = accel.reindex(g.index)
+        g["jerk"] = jerk.reindex(g.index)
         accel_blocks.append(g.reset_index())
 
-    return pd.concat(accel_blocks)
+    return pd.concat(accel_blocks) if accel_blocks else pd.DataFrame()
 
 
 # =========================
@@ -249,7 +267,7 @@ def add_interaction_features(df):
     pos = np.arange(len(df))
     groups = []
 
-    for (_, _), g in df.groupby(["location", "timestamp"], sort=False):
+    for (_, _), g in df.groupby(["location", "ts_bucket"], sort=False):  # ⭐ CHANGED
         if len(g) > 1:
             groups.append((pos[g.index], lat, lon, spd, hdg, vx, vy))
 
@@ -266,7 +284,7 @@ def add_interaction_features(df):
 
 
 # =========================
-# API ingestion (NEW)
+# API ingestion
 # =========================
 def process_raw_docs(payload: list[dict]):
     if not payload:
@@ -283,6 +301,11 @@ def process_raw_docs(payload: list[dict]):
 # =========================
 def save_stats(df):
     coll = get_stats_collection()
+
+    if df.empty:
+        return
+
+    df = df[df.groupby("object_id")["object_id"].transform("count") >= MIN_POINTS_PER_OBJECT]  # ⭐ NEW
 
     keep = [
         "object_id", "timestamp", "location", "detected_type",
@@ -327,12 +350,8 @@ def run_batches(batch_size):
         if len(raw) < batch_size:
             break
 
-def load_all_combined_stats(limit: int = 10_000, location: str | None = None):
-    """
-    Loads derived combined_stats from MongoDB.
-    Used by incident detection + analytics endpoints.
-    """
 
+def load_all_combined_stats(limit: int = 10_000, location: str | None = None):
     config = configparser.ConfigParser()
     config.read("connection.ini")
 
@@ -356,8 +375,8 @@ def load_all_combined_stats(limit: int = 10_000, location: str | None = None):
 
     df = pd.DataFrame(data).drop(columns=["_id"], errors="ignore")
     df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
-
     return df
+
 
 # =========================
 # CLI
