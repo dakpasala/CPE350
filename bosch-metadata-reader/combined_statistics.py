@@ -205,9 +205,9 @@ def add_motion_features(df):
         if len(g) < MIN_POINTS_PER_OBJECT:
             continue
         g = g.set_index("timestamp").sort_index()
-        spd = g["speed_mps"].resample("1S").mean().interpolate()
-        accel = spd.diff()
-        jerk = accel.diff()
+        spd = g["speed_mps"].resample("500ms").mean().interpolate()
+        accel = spd.diff().rolling(2, min_periods=1).mean()
+        jerk = accel.diff().rolling(2, min_periods=1).mean()
         g["accel"] = accel.reindex(g.index)
         g["jerk"] = jerk.reindex(g.index)
         accel_blocks.append(g.reset_index())
