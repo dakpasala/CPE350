@@ -156,7 +156,7 @@ def ingest_raw_vehicles(payload: List[Dict]):
         "buffer_seconds": BUFFER_SECONDS
     }
 
-
+ 
 # =========================
 # Incident detection
 # =========================
