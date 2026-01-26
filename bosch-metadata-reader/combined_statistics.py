@@ -22,7 +22,6 @@ from sklearn.neighbors import BallTree
 from tqdm import tqdm
 import os
 
-
 # =========================
 # Constants
 # =========================
