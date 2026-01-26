@@ -4,7 +4,6 @@
 
 import os
 import math
-import json
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -63,99 +62,6 @@ def _last4_hex(s: str) -> str:
     s_hex = "".join(ch for ch in s if ch in "0123456789abcdef")
     return s_hex[-4:] if len(s_hex) >= 4 else s_hex
 
-
-def _read_json_records(path: Path, max_rows: int):
-    """
-    Reads:
-      - JSON array: [ {...}, {...} ]
-      - JSONL: {...}\n{...}\n
-    Handles Mongo extended JSON fine (ex: {"$oid": "..."}).
-    Note: if your file is NOT valid JSON (ex: ObjectId('...') text),
-          export it as real JSON first.
-    """
-    raw = path.read_text(errors="ignore").strip()
-    if not raw:
-        return []
-
-    # JSON array
-    if raw[0] == "[":
-        data = json.loads(raw)  # allows Infinity by default
-        if isinstance(data, list):
-            return data[:max_rows]
-        return []
-
-    # JSONL
-    out = []
-    for line in raw.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            out.append(json.loads(line))
-        except Exception:
-            continue
-        if len(out) >= max_rows:
-            break
-    return out
-
-
-def load_frames_from_json(file_path: Path, max_rows: int = MAX_ROWS):
-    """
-    JSON -> frames: list[list[dict]] grouped by timestamp.
-    Expects fields like:
-      object_id,timestamp,location,detected_type,speed_mps,...,lat,lon
-    (same as your teammate listed)
-    """
-    records = _read_json_records(file_path, max_rows=max_rows)
-    if not records:
-        return [], []
-
-    df = pd.DataFrame.from_records(records)
-    df.columns = [c.strip().lower() for c in df.columns]
-
-    # rename to expected (same as your CSV path)
-    if "detected_type" in df.columns:
-        df.rename(columns={"detected_type": "type"}, inplace=True)
-    if "object_id" in df.columns:
-        df.rename(columns={"object_id": "id"}, inplace=True)
-    if "speed_mps" in df.columns:
-        df.rename(columns={"speed_mps": "speed"}, inplace=True)
-
-    # keep only what map needs
-    keep = ["id", "timestamp", "type", "speed", "lat", "lon"]
-    df = df[[c for c in keep if c in df.columns]]
-
-    # coerce nums
-    df = df.dropna(subset=["lat", "lon"])
-    df["lat"] = pd.to_numeric(df["lat"], errors="coerce")
-    df["lon"] = pd.to_numeric(df["lon"], errors="coerce")
-    if "speed" in df.columns:
-        df["speed"] = pd.to_numeric(df["speed"], errors="coerce").fillna(0.0)
-    df = df.dropna(subset=["lat", "lon"])
-
-    # timestamps
-    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce", utc=False)
-    df = df.dropna(subset=["timestamp"]).sort_values("timestamp")
-
-    frames, timestamps = [], []
-    for ts, group in df.groupby("timestamp", sort=True):
-        objs = []
-        for _, row in group.iterrows():
-            raw_id = str(row["id"])
-            objs.append({
-                "id_raw": raw_id,
-                "id_short": _last4_hex(raw_id),
-                "type": str(row.get("type", "unknown")),
-                "speed": float(row.get("speed", 0.0)),
-                "lat": float(row["lat"]),
-                "lon": float(row["lon"]),
-                "time": float(row["timestamp"].value) if pd.notna(row["timestamp"]) else None,
-            })
-        frames.append(objs)
-        timestamps.append(pd.Timestamp(ts))
-
-    print(f"Loaded {len(frames)} frames from {len(df)} rows (JSON).")
-    return frames, timestamps
 
 def get_mongo_collection(ini_path: Path, db_name: str, coll_name: str):
     cfg = configparser.ConfigParser()
@@ -254,64 +160,6 @@ def load_frames_from_mongo(ini_path: Path, db_name: str, coll_name: str,
     print(f"Loaded {len(frames)} frames from {len(df)} rows (Mongo).")
     return frames, stamps
 
-# -----------------------------
-# OLD CSV LOADER (kept, commented out)
-# -----------------------------
-# def load_frames_from_csv(file_path: Path, max_rows: int = MAX_ROWS):
-#     """
-#     Read CSV and return frames: list[ list[ {id_raw,id_short,type,speed,lat,lon} ] ],
-#     grouped by 'timestamp'. Only first `max_rows` rows are read.
-#     """
-#     df = pd.read_csv(file_path, nrows=max_rows)
-#
-#     # Normalize col names
-#     df.columns = [c.strip().lower() for c in df.columns]
-#
-#     # Rename to expected
-#     if "detected_type" in df.columns:
-#         df.rename(columns={"detected_type": "type"}, inplace=True)
-#     if "object_id" in df.columns:
-#         df.rename(columns={"object_id": "id"}, inplace=True)
-#     if "speed_mps" in df.columns:
-#         df.rename(columns={"speed_mps": "speed"}, inplace=True)
-#
-#     # Keep only needed cols
-#     keep = ["id", "timestamp", "type", "speed", "lat", "lon"]
-#     df = df[[c for c in keep if c in df.columns]]
-#
-#     # Drop rows without lat/lon; coerce to numeric
-#     df = df.dropna(subset=["lat", "lon"])
-#     df["lat"] = pd.to_numeric(df["lat"], errors="coerce")
-#     df["lon"] = pd.to_numeric(df["lon"], errors="coerce")
-#     if "speed" in df.columns:
-#         df["speed"] = pd.to_numeric(df["speed"], errors="coerce").fillna(0.0)
-#     df = df.dropna(subset=["lat", "lon"])
-#
-#     # Parse timestamps and sort chronologically
-#     df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
-#     df = df.dropna(subset=["timestamp"]).sort_values("timestamp")
-#
-#     # Build frames grouped by exact timestamp
-#     frames, timestamps = [], []
-#     for ts, group in df.groupby("timestamp", sort=True):
-#         objs = []
-#         for _, row in group.iterrows():
-#             raw_id = str(row["id"])
-#             objs.append({
-#                 "id_raw": raw_id,
-#                 "id_short": _last4_hex(raw_id),
-#                 "type": str(row.get("type", "unknown")),
-#                 "speed": float(row.get("speed", 0.0)),
-#                 "lat": float(row["lat"]),
-#                 "lon": float(row["lon"]),
-#                 "time": float(row["timestamp"].value) if pd.notna(row["timestamp"]) else None,
-#             })
-#         frames.append(objs)
-#         timestamps.append(pd.Timestamp(ts))
-#
-#     print(f"Loaded {len(frames)} frames from {len(df)} rows.")
-#     return frames, timestamps
-
 
 def frame_to_points(frame):
     """frame(list objs) -> arrays for plotly"""
@@ -380,7 +228,7 @@ def build_figure(center, lons, lats, colors, texts, customdata):
         ),
         margin=dict(l=0, r=0, t=0, b=0),
         showlegend=False,
-        uirevision="keep-view",
+        uirevision=False,
     )
     return fig
 
@@ -389,7 +237,7 @@ def main():
     # -----------------------------
     # Mongo settings
     # -----------------------------
-    INI_PATH = Path("connection.ini")
+    INI_PATH = Path(__file__).resolve().parent / "connection.ini"
 
     # This is the DB name your friend's script uses:
     DB_NAME = "camera-counts"
@@ -428,21 +276,6 @@ def main():
     print(f"Loaded {n_frames} frames from Mongo")
 
     # -----------------------------
-    # OLD FILE-BASED PATHS (kept, commented)
-    # -----------------------------
-    # candidates = sorted(Path("").glob("combined_vehicle_stats_expandedNEW.csv"))
-    # if not candidates:
-    #     raise FileNotFoundError("No 'combined_vehicle_stats_expandedNEW.csv' found in current directory")
-    # latest = candidates[-1]
-    # frames, stamps = load_frames_from_csv(latest, max_rows=MAX_ROWS)
-    #
-    # candidates = sorted(Path("").glob("*.json")) + sorted(Path("").glob("*.jsonl"))
-    # if not candidates:
-    #     raise FileNotFoundError("No .json/.jsonl found in current directory")
-    # latest = max(candidates, key=lambda p: p.stat().st_mtime)
-    # frames, stamps = load_frames_from_json(latest, max_rows=MAX_ROWS)
-
-    # -----------------------------
     # Center + initial fig
     # -----------------------------
     center = compute_center(frames)
@@ -474,6 +307,20 @@ def main():
                 marks=None,
                 tooltip={"always_visible": True},
             ),
+            html.Div("Camera Pitch"),
+            dcc.Slider(
+                0, 85,
+                step=1,
+                value=60,
+                id="pitch-slider",
+            ),
+            html.Div("Camera Bearing"),
+            dcc.Slider(
+                0, 360,
+                step=1,
+                value=30,
+                id="bearing-slider",
+            ),
             dcc.Interval(id="interval", interval=INTERVAL_MS, n_intervals=0),
             dcc.Store(id="play-offset", data=0),
             html.Div(
@@ -502,9 +349,11 @@ def main():
     @app.callback(
         Output("map", "figure"),
         Input("frame-slider", "value"),
+        Input("pitch-slider", "value"),
+        Input("bearing-slider", "value"),
         prevent_initial_call=True,
     )
-    def update_frame(idx):
+    def update_frame(idx, pitch, bearing):
         idx = int(idx)
         lons, lats, colors, texts, cdata = frame_to_points(frames[idx])
         fig.update_traces(
@@ -514,6 +363,12 @@ def main():
             text=texts,
             customdata=cdata,
             hovertemplate="ID: %{customdata[0]}<br>Type: %{customdata[1]}<extra></extra>",
+        )
+        fig.update_layout(
+            mapbox=dict(
+                pitch=int(pitch),
+                bearing=int(bearing),
+            )
         )
         return fig
 
