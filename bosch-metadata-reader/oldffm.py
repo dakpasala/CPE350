@@ -19,15 +19,12 @@ from camera_object import CameraObject
 from pointSearch import whichLane, setLanePairsFromDBList
 from collectData import pushObjectData
 from mongointerface import get_camera_data
-from broadcastlatlon import connect_to_server, send_websocket_data
 from send_to_api import send_to_api
+from broadcastlatlon import connect_to_server, send_websocket_data
 
 # -------------------------------------------------------
 # 1. Initialize camera info + globals
 # -------------------------------------------------------
-
-import platform
-import shutil
 
 if len(sys.argv) < 2:
     print("Usage: python ffmpegreader.py <camera_name>")
@@ -188,83 +185,40 @@ def parse_element(event, elem):
 
 
 # -------------------------------------------------------
-# 3. XML STREAM PARSER (LIVE RTSP URL VIA FFMPEG)
+# 3. XML STREAM PARSER
 # -------------------------------------------------------
 
-import subprocess
-import re
+# for the name and stuff so we don't gotta worry one bitz
+# xml_path = "../xmls/output11-18-228am.xml"
+xml_path = ""
 
-# Build RTSP URL from camera_info
-rtsp_url = f'rtsp://{camera_info["url"]}/rtsp_tunnel?p=0&line=1&inst=1&vcd=2'
-
-if platform.system() == "Windows":
-    FFMPEG_PATH = r"C:\Users\sammu\Downloads\ffmpeg-2026-01-19-git-43dbc011fa-full_build\bin\ffmpeg.exe"
-else:
-    FFMPEG_PATH = shutil.which("ffmpeg")
-
-    if FFMPEG_PATH is None:
-        raise RuntimeError(
-            "ffmpeg not found. Install it with `brew install ffmpeg` on macOS."
-        )
-
-ffmpeg_cmd = [
-    FFMPEG_PATH,
-    "-i", rtsp_url,
-    "-map", "0:d",
-    "-c", "copy",
-    "-copy_unknown",
-    "-loglevel", "fatal",
-    "-f", "data",
-    "-"
-]
-
+if not os.path.exists(xml_path):
+    raise FileNotFoundError(f"XML file not found: {xml_path}")
 
 parser = ET.XMLPullParser(['start', 'end'])
 parser.feed("<root>")
 
-foundStart = False
-chunk_counter = 0
+chunk_count = 0
 
-with subprocess.Popen(
-    ffmpeg_cmd,
-    stdout=subprocess.PIPE,
-    bufsize=0
-) as process:
+with open(xml_path, "rb") as file:
+    for chunk in iter(lambda: file.read(4096), b""):
+        chunk_count += 1
+        try:
+            parser.feed(chunk)
 
-    while True:
-        chunk = process.stdout.read(4096)
+            for event, elem in parser.read_events():
+                try:
+                    parse_element(event, elem)
+                except Exception as e:
+                    print("Parse error:", e)
+                finally:
+                    elem.clear()
 
-        if not chunk:
+        except ET.ParseError:
+            print("⚠ XML chunk malformed — recovering...")
+            parser = ET.XMLPullParser(['start', 'end'])
+            parser.feed("<root>")
             continue
 
-        chunk_counter += 1
-
-        # Look for start of metadata packet
-        if not foundStart:
-            try:
-                decoded = chunk.decode("utf-8", errors="ignore")
-                match = re.search("<tt:MetadataStream", decoded)
-                if match:
-                    chunk = chunk[match.start():]
-                    foundStart = True
-            except Exception:
-                continue
-
-        if foundStart:
-            try:
-                parser.feed(chunk)
-
-                for event, elem in parser.read_events():
-                    try:
-                        parse_element(event, elem)
-                    except Exception as e:
-                        print("Parse error:", e)
-                    finally:
-                        elem.clear()
-
-            except ET.ParseError:
-                # Recover from broken XML packets
-                print("⚠ XML malformed — resetting parser")
-                foundStart = False
-                parser = ET.XMLPullParser(['start', 'end'])
-                parser.feed("<root>")
+print(f"\n✅ Finished parsing {chunk_count} chunks")
+print(f"📉 Frame skipping enabled: saved 1 out of every {FRAME_SKIP} frames")

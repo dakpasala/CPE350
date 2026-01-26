@@ -1,51 +1,61 @@
 #!/usr/bin/env python3
 """
 combined_statistics.py
-Final optimized multithreaded version.
-Pulls from MongoDB, expands mapPath, computes:
-  - Motion features (speed_mps, accel, jerk, heading, etc.)
-  - Interaction features (nn_dist_m, rel_speed_mps, heading_diff_deg,
-    closing_rate_mps, ttc_s)
-Uses ThreadPoolExecutor for parallel nearest-neighbor processing.
+
+Production batch + API feature-extraction worker.
+
+Supports:
+- Mongo batch ingestion (legacy)
+- API JSON ingestion (new)
+
+Pipeline:
+  raw vehicles → combined_stats (derived)
 """
 
 import argparse
 import configparser
-import math
-import os
 import concurrent.futures
-
 import numpy as np
 import pandas as pd
 import pymongo
 from sklearn.neighbors import BallTree
 from tqdm import tqdm
+import os
 
 # =========================
 # Constants
 # =========================
 R_EARTH_M = 6371000.0
 CONFIDENCE_THRESHOLD = 0.5
-MAX_WORKERS = max(2, int((__import__("os").cpu_count() or 4) * 0.75))
+MAX_WORKERS = max(2, int((os.cpu_count() or 4) * 0.75))
+
+MIN_POINTS_PER_OBJECT = 3      # ⭐ Used only for batch processing
+TIME_BUCKET = "1S"             # ⭐ timestamp alignment for livestream
 
 
 # =========================
-# Mongo connection
+# Mongo helpers
 # =========================
-def get_collection():
+def _get_db():
     config = configparser.ConfigParser()
     config.read("connection.ini")
-    dbUrl = config["DEFAULT"]["database"]
-    client = pymongo.MongoClient(dbUrl)
-    db = client["camera-counts"]
-    return db["vehicles"]
+    client = pymongo.MongoClient(config["DEFAULT"]["database"])
+    return client["camera-counts"]
+
+
+def get_raw_collection():
+    return _get_db()["vehicles"]
+
+
+def get_stats_collection():
+    return _get_db()["combined_stats"]
 
 
 # =========================
-# Fetch data
+# Fetch raw batch (LEGACY)
 # =========================
-def fetch_vehicle_data(limit=None):
-    coll = get_collection()
+def fetch_vehicle_batch(batch_size):
+    coll = get_raw_collection()
     projection = {
         "_id": 1,
         "timestamp": 1,
@@ -57,12 +67,7 @@ def fetch_vehicle_data(limit=None):
         "time_elapsed": 1,
         "mapPath": 1,
     }
-    cursor = coll.find({}, projection)
-    if limit:
-        cursor = cursor.limit(int(limit))
-    data = list(cursor)
-    print(f"✅ Retrieved {len(data)} vehicle records.")
-    return data
+    return list(coll.find({}, projection).limit(batch_size))
 
 
 # =========================
@@ -70,23 +75,22 @@ def fetch_vehicle_data(limit=None):
 # =========================
 def expand_map_paths(data):
     rows = []
-    for doc in data:
-        raw_id = str(doc.get("_id")).strip()
 
+    for doc in data:
+        raw_id = str(doc.get("_id", ""))
         true_id = raw_id
-        ts = doc.get("timestamp")
-        ts_parsed = pd.to_datetime(ts, errors="coerce")
+        ts = pd.to_datetime(doc.get("timestamp"), errors="coerce")
 
         if "_" in raw_id:
             maybe_id, maybe_ts = raw_id.split("_", 1)
             ts_from_id = pd.to_datetime(maybe_ts, errors="coerce")
             if not pd.isna(ts_from_id):
                 true_id = maybe_id
-                ts_parsed = ts_from_id
+                ts = ts_from_id
 
         base = {
             "object_id": true_id,
-            "timestamp": ts_parsed,
+            "timestamp": ts,
             "location": doc.get("location"),
             "detected_type": doc.get("detected_type"),
             "speed": doc.get("speed"),
@@ -96,145 +100,167 @@ def expand_map_paths(data):
         }
 
         path = doc.get("mapPath", [])
-        if isinstance(path, list) and path:
-            for i, coords in enumerate(path):
-                if isinstance(coords, (list, tuple)) and len(coords) == 2:
-                    lat, lon = coords
-                    row = base.copy()
-                    row["path_index"] = i
-                    row["lat"], row["lon"] = lat, lon
-                    rows.append(row)
+        if not isinstance(path, list):
+            path = []
+
+        if path:
+            for i, pt in enumerate(path):
+                if not isinstance(pt, (list, tuple)) or len(pt) != 2:
+                    continue
+                lat, lon = pt
+                row = base.copy()
+                row.update({"path_index": i, "lat": lat, "lon": lon})
+                rows.append(row)
         else:
             row = base.copy()
             row.update({"path_index": np.nan, "lat": np.nan, "lon": np.nan})
             rows.append(row)
 
     df = pd.DataFrame(rows)
-
-    for c in ["lat", "lon", "speed"]:
-        df[c] = pd.to_numeric(df[c], errors="coerce").astype("float32")
-    df["path_index"] = pd.to_numeric(df["path_index"], errors="coerce").astype("float32")
     df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+    for c in ["lat", "lon", "speed", "path_index"]:
+        df[c] = pd.to_numeric(df[c], errors="coerce")
 
-    print(f"🧩 Expanded → {len(df)} rows.")
+    df["ts_bucket"] = df["timestamp"].dt.floor(TIME_BUCKET)
+
     return df
 
 
 # =========================
-# Helpers
+# Motion features
 # =========================
 def mph_to_mps(s):
-    return pd.to_numeric(s, errors="coerce").fillna(0) * 0.44704
+    return pd.to_numeric(s, errors="coerce") * 0.44704
 
 
 def bearing_deg(lat1, lon1, lat2, lon2):
-    lat1, lon1, lat2, lon2 = map(
-        np.radians, [lat1.to_numpy(), lon1.to_numpy(), lat2.to_numpy(), lon2.to_numpy()]
-    )
+    lat1, lon1, lat2, lon2 = map(np.radians, [lat1, lon1, lat2, lon2])
     dlon = lon2 - lon1
     x = np.sin(dlon) * np.cos(lat2)
     y = np.cos(lat1) * np.sin(lat2) - np.sin(lat1) * np.cos(lat2) * np.cos(dlon)
-    return (np.degrees(np.arctan2(x, y)) + 360.0) % 360.0
+    return (np.degrees(np.arctan2(x, y)) + 360) % 360
 
 
 def shortest_angle_diff_deg(a, b):
-    return ((a - b + 180.0) % 360.0) - 180.0
+    return ((a - b + 180) % 360) - 180
 
 
-# =========================
-# Motion Features
-# =========================
-def add_motion_features(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    df.sort_values(["object_id", "timestamp", "path_index"], inplace=True)
+def add_motion_features(df):
+    df = df.sort_values(["object_id", "timestamp", "path_index"]).copy()
 
-    df["dt_s"] = (
-        df.groupby("object_id")["timestamp"]
-        .diff()
-        .dt.total_seconds()
-    )
-    df["dt_s"] = df["dt_s"].replace(0, np.nan).fillna(0.1)
+    # ⭐ REMOVED: Don't filter by MIN_POINTS for livestream - allow single points
+    # counts = df.groupby("object_id")["timestamp"].transform("count")
+    # df = df[counts >= MIN_POINTS_PER_OBJECT]
+
+    if df.empty:
+        return df
+
+    df["dt_s"] = df.groupby("object_id")["timestamp"].diff().dt.total_seconds()
+    df["dt_s"] = df["dt_s"].replace(0, np.nan)
 
     df["lat_prev"] = df.groupby("object_id")["lat"].shift(1)
     df["lon_prev"] = df.groupby("object_id")["lon"].shift(1)
 
-    dist_m = np.zeros(len(df), dtype="float32")
-    valid = (
-        df["lat_prev"].notna()
-        & df["lon_prev"].notna()
-        & df["lat"].notna()
-        & df["lon"].notna()
+    lat1 = np.radians(df["lat_prev"])
+    lon1 = np.radians(df["lon_prev"])
+    lat2 = np.radians(df["lat"])
+    lon2 = np.radians(df["lon"])
+
+    dlat = lat2 - lat1
+    dlon = lon2 - lon1
+    a = np.sin(dlat / 2)**2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2)**2
+    c = 2 * np.arcsin(np.sqrt(a))
+    dist_m = R_EARTH_M * c
+
+    # ⭐ FIXED: Start with reported speed, then override with calculated where available
+    df["speed_mps"] = mph_to_mps(df["speed"])  # Use reported speed as baseline
+
+    df["speed_mps"] = np.where(
+        (dist_m > 0.5) & (df["dt_s"] > 0),
+        dist_m / df["dt_s"],
+        df["speed_mps"]  # Keep reported speed if we can't calculate
     )
 
-    if valid.any():
-        lat1 = np.radians(df.loc[valid, "lat_prev"])
-        lon1 = np.radians(df.loc[valid, "lon_prev"])
-        lat2 = np.radians(df.loc[valid, "lat"])
-        lon2 = np.radians(df.loc[valid, "lon"])
-
-        dlat = lat2 - lat1
-        dlon = lon2 - lon1
-        a = np.sin(dlat / 2) ** 2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2) ** 2
-        c = 2 * np.arcsin(np.sqrt(a))
-        dist_m[valid] = (R_EARTH_M * c).astype("float32")
-
-    df["dist_m"] = dist_m
-    df["speed_mps"] = np.where(
-        df["dist_m"] > 0.01,
-        df["dist_m"] / df["dt_s"],
-        mph_to_mps(df["speed"])
-    ).astype("float32")
-
     df["heading_deg"] = bearing_deg(
-        df.groupby("object_id")["lat"].shift(1).fillna(df["lat"]),
-        df.groupby("object_id")["lon"].shift(1).fillna(df["lon"]),
+        df["lat_prev"].fillna(df["lat"]),
+        df["lon_prev"].fillna(df["lon"]),
         df["lat"],
         df["lon"]
-    ).astype("float32")
+    )
 
     df["d_heading_deg"] = shortest_angle_diff_deg(
         df["heading_deg"],
         df.groupby("object_id")["heading_deg"].shift(1)
-    ).fillna(0).astype("float32")
+    )
 
     df["zone_change"] = (
         df.groupby("object_id")["zones"].shift(1).astype(str) != df["zones"].astype(str)
-    ).astype("int8")
+    ).astype(int)
 
     df["path_gap"] = (
         df.groupby("object_id")["path_index"].diff().fillna(1) > 1
-    ).astype("int8")
+    ).astype(int)
 
-    df["is_confident"] = df["certainty"].fillna(0) > CONFIDENCE_THRESHOLD
+    df["is_confident"] = df["certainty"] > CONFIDENCE_THRESHOLD
 
     accel_blocks = []
-    for oid, g in df.groupby("object_id"):
-        g2 = g.set_index("timestamp").sort_index()
-        speed_resampled = g2["speed_mps"].resample("1S").mean().interpolate()
-        accel = speed_resampled.diff().fillna(0)
-        jerk = accel.diff().fillna(0)
+    for _, g in df.groupby("object_id"):
+        if len(g) < 2:
+            # Need at least 2 points for derivatives
+            g["accel"] = np.nan
+            g["jerk"] = np.nan
+            accel_blocks.append(g)
+            continue
+        
+        g = g.sort_values("timestamp").reset_index(drop=True)
+        
+        # Calculate derivatives directly on the original timestamps
+        # No resampling - work with actual observation intervals
+        speeds = g["speed_mps"].values
+        times = g["timestamp"].values
+        
+        # Time deltas in seconds
+        dt = np.diff(g["timestamp"].astype('int64') / 1e9)  # Convert to seconds
+        dt = np.concatenate([[np.nan], dt])  # First point has no delta
+        
+        # Acceleration = change in speed / time
+        dspeed = np.diff(speeds)
+        accel = np.concatenate([[np.nan], dspeed / dt[1:]])
+        
+        # Smooth with rolling mean (min 2 points)
+        accel_series = pd.Series(accel)
+        accel_smooth = accel_series.rolling(window=3, min_periods=1, center=True).mean()
+        
+        # Jerk = change in acceleration / time  
+        daccel = np.diff(accel_smooth)
+        jerk = np.concatenate([[np.nan], daccel / dt[1:]])
+        jerk_series = pd.Series(jerk)
+        jerk_smooth = jerk_series.rolling(window=3, min_periods=1, center=True).mean()
+        
+        g["accel"] = accel_smooth.values
+        g["jerk"] = jerk_smooth.values
+        
+        accel_blocks.append(g)
 
-        g2["accel"] = accel.reindex(g2.index, method="nearest")
-        g2["jerk"] = jerk.reindex(g2.index, method="nearest")
-        accel_blocks.append(g2.reset_index())
-
-    return pd.concat(accel_blocks).sort_values(["object_id", "timestamp", "path_index"])
+    return pd.concat(accel_blocks, ignore_index=True) if accel_blocks else pd.DataFrame()
 
 
 # =========================
-# Interaction Features
+# Interaction features
 # =========================
 def compute_interaction_for_group(args):
-    loc, t, g_pos, lat, lon, spd, hdg, vx, vy = args
+    g_pos, lat, lon, spd, hdg, vx, vy = args
+
     if len(g_pos) <= 1:
         return None
 
     pts = np.column_stack([lat[g_pos], lon[g_pos]])
     tree = BallTree(pts, metric="haversine")
-    d, idx = tree.query(pts, k=2)
 
+    d, idx = tree.query(pts, k=2)
     nn = idx[:, 1]
     dist = d[:, 1] * R_EARTH_M
+
     rel_speed = np.abs(spd[g_pos] - spd[g_pos][nn])
     heading_diff = np.abs(((hdg[g_pos] - hdg[g_pos][nn] + 180) % 360) - 180)
 
@@ -249,13 +275,26 @@ def compute_interaction_for_group(args):
     rvy = vy[g_pos] - vy[g_pos][nn]
     closing_rate = rvx * ux + rvy * uy
 
-    ttc = np.where(closing_rate < 0, -dist_xy / closing_rate, np.inf)
+    ttc = np.full_like(dist_xy, np.inf)
+    valid = closing_rate < 0
+    ttc[valid] = -dist_xy[valid] / closing_rate[valid]
 
     return g_pos, dist, rel_speed, heading_diff, closing_rate, ttc
 
 
-def add_interaction_features_parallel(df, sample_step=1):
-    df = df.copy()
+def add_interaction_features(df):
+    # ---- EARLY EXIT: not enough data ----
+    if df.empty or "speed_mps" not in df.columns:
+        for c in [
+            "nn_dist_m",
+            "rel_speed_mps",
+            "heading_diff_deg",
+            "closing_rate_mps",
+            "ttc_s",
+        ]:
+            df[c] = np.nan
+        return df
+
     for c in ["nn_dist_m", "rel_speed_mps", "heading_diff_deg", "closing_rate_mps", "ttc_s"]:
         df[c] = np.nan
 
@@ -267,18 +306,15 @@ def add_interaction_features_parallel(df, sample_step=1):
     vx = spd * np.cos(np.radians(hdg))
     vy = spd * np.sin(np.radians(hdg))
 
-    pos = pd.Series(np.arange(len(df)), index=df.index)
+    pos = np.arange(len(df))
+    groups = []
 
-    tasks = []
-    for (loc, t), g in df.groupby(["location", "timestamp"], sort=False):
-        if len(g) <= 1:
-            continue
-        if np.random.randint(0, sample_step) != 0:
-            continue
-        tasks.append((loc, t, pos.loc[g.index].to_numpy(), lat, lon, spd, hdg, vx, vy))
+    for (_, _), g in df.groupby(["location", "ts_bucket"], sort=False):
+        if len(g) > 1:
+            groups.append((pos[g.index], lat, lon, spd, hdg, vx, vy))
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
-        for r in tqdm(ex.map(compute_interaction_for_group, tasks), total=len(tasks)):
+    with concurrent.futures.ThreadPoolExecutor(MAX_WORKERS) as ex:
+        for r in tqdm(ex.map(compute_interaction_for_group, groups), total=len(groups)):
             if r is None:
                 continue
             g_pos, *vals = r
@@ -290,11 +326,29 @@ def add_interaction_features_parallel(df, sample_step=1):
 
 
 # =========================
-# Save
+# API ingestion
 # =========================
-def save_results(df):
-    out = "combined_vehicle_stats_expandedNEW.csv"
-    exists = os.path.exists(out)
+def process_raw_docs(payload: list[dict]):
+    if not payload:
+        return pd.DataFrame()
+
+    df = expand_map_paths(payload)
+    df = add_motion_features(df)
+    df = add_interaction_features(df)
+    return df
+
+
+# =========================
+# Save + delete
+# =========================
+def save_stats(df):
+    coll = get_stats_collection()
+
+    if df.empty:
+        return
+
+    # ⭐ REMOVED: Don't filter by MIN_POINTS for livestream - save all observations
+    # df = df[df.groupby("object_id")["object_id"].transform("count") >= MIN_POINTS_PER_OBJECT]
 
     keep = [
         "object_id", "timestamp", "location", "detected_type",
@@ -304,43 +358,78 @@ def save_results(df):
         "certainty", "is_confident", "lat", "lon"
     ]
 
-    df[keep].dropna(how="all").to_csv(
-        out, mode="a", header=not exists, index=False
+    records = df[keep].dropna(subset=["timestamp", "object_id"]).to_dict("records")
+    if records:
+        coll.insert_many(records, ordered=False)
+
+
+def delete_raw(raw_docs, chunk_size=5000):
+    coll = get_raw_collection()
+    ids = [d["_id"] for d in raw_docs]
+
+    for i in range(0, len(ids), chunk_size):
+        coll.delete_many({"_id": {"$in": ids[i:i + chunk_size]}})
+
+    print(f"🧹 Deleted {len(ids)} raw docs")
+
+
+# =========================
+# Batch runner (LEGACY)
+# =========================
+def run_batches(batch_size):
+    while True:
+        raw = fetch_vehicle_batch(batch_size)
+        if not raw:
+            print("✅ No more raw docs.")
+            break
+
+        print(f"🚚 Processing {len(raw)} raw docs")
+        df = expand_map_paths(raw)
+        df = add_motion_features(df)
+        df = add_interaction_features(df)
+        
+        # ⭐ For batch processing, filter to complete trajectories before saving
+        df = df[df.groupby("object_id")["object_id"].transform("count") >= MIN_POINTS_PER_OBJECT]
+        
+        save_stats(df)
+        delete_raw(raw)
+
+        if len(raw) < batch_size:
+            break
+
+
+def load_all_combined_stats(limit: int = 10_000, location: str | None = None):
+    config = configparser.ConfigParser()
+    config.read("connection.ini")
+
+    client = pymongo.MongoClient(config["DEFAULT"]["database"])
+    db = client["camera-counts"]
+
+    query = {}
+    if location is not None:
+        query["location"] = location
+
+    cursor = (
+        db["combined_stats"]
+        .find(query)
+        .sort("timestamp", -1)
+        .limit(limit)
     )
 
-    print(f"💾 {'Appended to' if exists else 'Created'} → {out}")
+    data = list(cursor)
+    if not data:
+        return pd.DataFrame()
 
-
-# =========================
-# API-SAFE PIPELINE (NEW)
-# =========================
-def run_feature_pipeline(limit=None, interactions=True, sample_step=1):
-    data = fetch_vehicle_data(limit)
-    df = expand_map_paths(data)
-    df = add_motion_features(df)
-
-    if interactions:
-        df = add_interaction_features_parallel(df, sample_step)
-    else:
-        for c in ["nn_dist_m", "rel_speed_mps", "heading_diff_deg", "closing_rate_mps", "ttc_s"]:
-            df[c] = np.nan
-
-    save_results(df)
+    df = pd.DataFrame(data).drop(columns=["_id"], errors="ignore")
+    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
     return df
 
 
 # =========================
-# CLI ENTRYPOINT (UNCHANGED)
+# CLI
 # =========================
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
-    p.add_argument("--limit", type=int, default=None)
-    p.add_argument("--no-interactions", action="store_true")
-    p.add_argument("--sample-step", type=int, default=1)
+    p.add_argument("--batch-size", type=int, default=100_000)
     args = p.parse_args()
-
-    run_feature_pipeline(
-        limit=args.limit,
-        interactions=not args.no_interactions,
-        sample_step=args.sample_step
-    )
+    run_batches(args.batch_size)
