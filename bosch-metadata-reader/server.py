@@ -80,6 +80,7 @@ def health():
 def process_window_async(location: str, docs: list[Dict]):
     """
     Processes one complete 15-second window.
+    Then automatically runs incident detection on the new data.
     """
     
     if not docs:
@@ -91,7 +92,7 @@ def process_window_async(location: str, docs: list[Dict]):
         # Feature extraction on full window
         df = process_raw_docs(docs)
     except Exception as e:
-        print(f"❌ Feature extraction failed for {location}: {e}")
+        print(f"Feature extraction failed for {location}: {e}")
         return
 
     if df.empty:
@@ -107,10 +108,38 @@ def process_window_async(location: str, docs: list[Dict]):
         f"| objects={df['object_id'].nunique()} "
         f"| accel_populated={accel_count}/{len(df)}"
     )
+    
+    # -------------------------
+    # AUTO-RUN INCIDENT DETECTION
+    # -------------------------
+    try:
+        print(f"Running incident detection for {location}...")
+        
+        # Load recent data (last 5 minutes should be enough)
+        df_recent = load_all_combined_stats(limit=5000, location=location)
+        
+        if df_recent.empty:
+            print(f"⚠ No data for incident detection")
+            return
+        
+        # Scale and detect
+        df_scaled, _ = scale_per_location(df_recent)
+        models = load_latest_models()
+        incidents = detect_incidents(df_scaled, models)
+        
+        if incidents:
+            print(f"INCIDENTS DETECTED: {len(incidents)}")
+            for incident in incidents:
+                print(f"   - {incident}")
+        else:
+            print(f"No incidents detected")
+            
+    except Exception as e:
+        print(f"Incident detection failed: {e}")
 
 
 # =========================
-# 🔥 RAW INGESTION
+# RAW INGESTION
 # =========================
 
 @app.post("/raw-vehicles")
@@ -172,7 +201,7 @@ def ingest_raw_vehicles(payload: List[Dict]):
             # Calculate window duration
             elapsed = (now - window_start).total_seconds()
             
-            # ⭐ KEY: Only process if window is COMPLETE
+            # KEY: Only process if window is COMPLETE
             if elapsed >= WINDOW_SECONDS:
                 print(f"⏰ Window closed for {location} after {elapsed:.1f}s | docs={len(buf)}")
                 
