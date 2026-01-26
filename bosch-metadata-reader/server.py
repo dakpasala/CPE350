@@ -202,20 +202,48 @@ def broadcast_window_data(location: str, vehicles: List[Dict], incidents: List[D
     - All detected incidents
     - Mapping of which vehicles are in incidents
     """
+    
+    message = {
+        "type": "window_complete",
+        "location": location,
+        "timestamp": datetime.utcnow().isoformat(),
+        "vehicle_count": len(vehicles),
+        "incident_count": len(incidents),
+        "vehicles": vehicles,
+        "incidents": incidents
+    }
+    
+    # 🔥 PRINT DATA BEING SENT
+    print(f"\n📤 DATA PREPARED FOR FRONTEND:")
+    print(f"   Location: {location}")
+    print(f"   Timestamp: {message['timestamp']}")
+    print(f"   Vehicle count: {len(vehicles)}")
+    print(f"   Incident count: {len(incidents)}")
+    
+    if vehicles:
+        print(f"\n   📍 Sample vehicles (showing first 3):")
+        for v in vehicles[:3]:
+            print(f"      • ID={v['id']} | lat={v['lat']:.6f}, lon={v['lon']:.6f}")
+            print(f"        speed={v['speed_mps']:.2f} m/s, accel={v['accel']}, heading={v['heading_deg']:.1f}°")
+            print(f"        type={v['detected_type']}, certainty={v['certainty']:.2f}")
+            if v['incidents']:
+                print(f"        🚨 INVOLVED IN INCIDENTS: {v['incidents']}")
+    
+    if incidents:
+        print(f"\n   🚨 Incidents detected:")
+        for inc in incidents:
+            print(f"      • {inc['incident_type']} | severity={inc['severity']:.2f}")
+            print(f"        vehicles={inc['vehicles']} | time={inc['timestamp']}")
+    
+    # Check if any clients connected
     if not VEHICLE_STREAM_CLIENTS:
+        print(f"\n   ⚠️  No clients connected - data NOT sent\n")
         return
     
+    # Send to all connected clients
+    print(f"\n   ✅ Sending to {len(VEHICLE_STREAM_CLIENTS)} client(s)\n")
+    
     with VEHICLE_STREAM_LOCK:
-        message = {
-            "type": "window_complete",
-            "location": location,
-            "timestamp": datetime.utcnow().isoformat(),
-            "vehicle_count": len(vehicles),
-            "incident_count": len(incidents),
-            "vehicles": vehicles,
-            "incidents": incidents
-        }
-        
         disconnected = []
         for ws in VEHICLE_STREAM_CLIENTS:
             try:
