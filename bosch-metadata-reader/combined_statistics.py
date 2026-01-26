@@ -29,8 +29,8 @@ R_EARTH_M = 6371000.0
 CONFIDENCE_THRESHOLD = 0.5
 MAX_WORKERS = max(2, int((os.cpu_count() or 4) * 0.75))
 
-MIN_POINTS_PER_OBJECT = 3      # ⭐ NEW: minimum trajectory length
-TIME_BUCKET = "1S"             # ⭐ NEW: timestamp alignment for livestream
+MIN_POINTS_PER_OBJECT = 3      # ⭐ Used only for batch processing
+TIME_BUCKET = "1S"             # ⭐ timestamp alignment for livestream
 
 
 # =========================
@@ -121,7 +121,7 @@ def expand_map_paths(data):
     for c in ["lat", "lon", "speed", "path_index"]:
         df[c] = pd.to_numeric(df[c], errors="coerce")
 
-    df["ts_bucket"] = df["timestamp"].dt.floor(TIME_BUCKET)  # ⭐ NEW
+    df["ts_bucket"] = df["timestamp"].dt.floor(TIME_BUCKET)
 
     return df
 
@@ -148,15 +148,15 @@ def shortest_angle_diff_deg(a, b):
 def add_motion_features(df):
     df = df.sort_values(["object_id", "timestamp", "path_index"]).copy()
 
-    # ⭐ NEW: gate motion features
-    counts = df.groupby("object_id")["timestamp"].transform("count")
-    df = df[counts >= MIN_POINTS_PER_OBJECT]
+    # ⭐ REMOVED: Don't filter by MIN_POINTS for livestream - allow single points
+    # counts = df.groupby("object_id")["timestamp"].transform("count")
+    # df = df[counts >= MIN_POINTS_PER_OBJECT]
 
     if df.empty:
         return df
 
     df["dt_s"] = df.groupby("object_id")["timestamp"].diff().dt.total_seconds()
-    df["dt_s"] = df["dt_s"].replace(0, np.nan)   # ⭐ CHANGED (no fake 0.1)
+    df["dt_s"] = df["dt_s"].replace(0, np.nan)
 
     df["lat_prev"] = df.groupby("object_id")["lat"].shift(1)
     df["lon_prev"] = df.groupby("object_id")["lon"].shift(1)
@@ -172,17 +172,13 @@ def add_motion_features(df):
     c = 2 * np.arcsin(np.sqrt(a))
     dist_m = R_EARTH_M * c
 
-    # ---- SAFETY: ensure speed_mps always exists ----
-    if "speed_mps" not in df.columns:
-        df["speed_mps"] = 0.0
-    else:
-        df["speed_mps"] = df["speed_mps"].fillna(0.0)
-
+    # ⭐ FIXED: Start with reported speed, then override with calculated where available
+    df["speed_mps"] = mph_to_mps(df["speed"])  # Use reported speed as baseline
 
     df["speed_mps"] = np.where(
         (dist_m > 0.5) & (df["dt_s"] > 0),
         dist_m / df["dt_s"],
-        mph_to_mps(df["speed"])
+        df["speed_mps"]  # Keep reported speed if we can't calculate
     )
 
     df["heading_deg"] = bearing_deg(
@@ -209,17 +205,44 @@ def add_motion_features(df):
 
     accel_blocks = []
     for _, g in df.groupby("object_id"):
-        if len(g) < MIN_POINTS_PER_OBJECT:
+        if len(g) < 2:
+            # Need at least 2 points for derivatives
+            g["accel"] = np.nan
+            g["jerk"] = np.nan
+            accel_blocks.append(g)
             continue
-        g = g.set_index("timestamp").sort_index()
-        spd = g["speed_mps"].resample("250ms").mean().interpolate()
-        accel = spd.diff().rolling(3, min_periods=1).mean()
-        jerk = accel.diff().rolling(3, min_periods=1).mean()
-        g["accel"] = accel.reindex(g.index)
-        g["jerk"] = jerk.reindex(g.index)
-        accel_blocks.append(g.reset_index())
+        
+        g = g.sort_values("timestamp").reset_index(drop=True)
+        
+        # Calculate derivatives directly on the original timestamps
+        # No resampling - work with actual observation intervals
+        speeds = g["speed_mps"].values
+        times = g["timestamp"].values
+        
+        # Time deltas in seconds
+        dt = np.diff(g["timestamp"].astype('int64') / 1e9)  # Convert to seconds
+        dt = np.concatenate([[np.nan], dt])  # First point has no delta
+        
+        # Acceleration = change in speed / time
+        dspeed = np.diff(speeds)
+        accel = np.concatenate([[np.nan], dspeed / dt[1:]])
+        
+        # Smooth with rolling mean (min 2 points)
+        accel_series = pd.Series(accel)
+        accel_smooth = accel_series.rolling(window=3, min_periods=1, center=True).mean()
+        
+        # Jerk = change in acceleration / time  
+        daccel = np.diff(accel_smooth)
+        jerk = np.concatenate([[np.nan], daccel / dt[1:]])
+        jerk_series = pd.Series(jerk)
+        jerk_smooth = jerk_series.rolling(window=3, min_periods=1, center=True).mean()
+        
+        g["accel"] = accel_smooth.values
+        g["jerk"] = jerk_smooth.values
+        
+        accel_blocks.append(g)
 
-    return pd.concat(accel_blocks) if accel_blocks else pd.DataFrame()
+    return pd.concat(accel_blocks, ignore_index=True) if accel_blocks else pd.DataFrame()
 
 
 # =========================
@@ -286,7 +309,7 @@ def add_interaction_features(df):
     pos = np.arange(len(df))
     groups = []
 
-    for (_, _), g in df.groupby(["location", "ts_bucket"], sort=False):  # ⭐ CHANGED
+    for (_, _), g in df.groupby(["location", "ts_bucket"], sort=False):
         if len(g) > 1:
             groups.append((pos[g.index], lat, lon, spd, hdg, vx, vy))
 
@@ -324,7 +347,8 @@ def save_stats(df):
     if df.empty:
         return
 
-    df = df[df.groupby("object_id")["object_id"].transform("count") >= MIN_POINTS_PER_OBJECT]  # ⭐ NEW
+    # ⭐ REMOVED: Don't filter by MIN_POINTS for livestream - save all observations
+    # df = df[df.groupby("object_id")["object_id"].transform("count") >= MIN_POINTS_PER_OBJECT]
 
     keep = [
         "object_id", "timestamp", "location", "detected_type",
@@ -334,7 +358,7 @@ def save_stats(df):
         "certainty", "is_confident", "lat", "lon"
     ]
 
-    records = df[keep].dropna(subset=["timestamp"]).to_dict("records")
+    records = df[keep].dropna(subset=["timestamp", "object_id"]).to_dict("records")
     if records:
         coll.insert_many(records, ordered=False)
 
@@ -363,6 +387,10 @@ def run_batches(batch_size):
         df = expand_map_paths(raw)
         df = add_motion_features(df)
         df = add_interaction_features(df)
+        
+        # ⭐ For batch processing, filter to complete trajectories before saving
+        df = df[df.groupby("object_id")["object_id"].transform("count") >= MIN_POINTS_PER_OBJECT]
+        
         save_stats(df)
         delete_raw(raw)
 

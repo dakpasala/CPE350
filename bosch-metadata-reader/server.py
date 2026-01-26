@@ -4,6 +4,7 @@ from typing import List, Dict
 
 from collections import defaultdict, deque
 import pandas as pd
+from threading import Thread, Lock
 
 
 # =========================
@@ -25,14 +26,16 @@ from incident_detection.data import scale_per_location
 # Buffering config
 # =========================
 
-BUFFER_SECONDS = 15        # ⭐ CHANGED (was 5 — too short for trajectories)
-MIN_BUFFER_DOCS = 3        # ⭐ NEW: minimum docs before feature extraction
+WINDOW_SECONDS = 15        # Fixed window: accumulate for 15s, then process
 
 # location -> deque of raw vehicle dicts
 RAW_BUFFER = defaultdict(deque)
 
-# location -> last processed timestamp
-LAST_PROCESSED_TS = {}     # ⭐ NEW
+# location -> window start time
+WINDOW_START = {}
+
+# Thread safety
+BUFFER_LOCK = Lock()
 
 
 # =========================
@@ -51,109 +54,151 @@ app = FastAPI(
 
 @app.get("/health")
 def health():
+    with BUFFER_LOCK:
+        buffer_stats = {}
+        for loc in RAW_BUFFER.keys():
+            window_start = WINDOW_START.get(loc)
+            elapsed = (datetime.utcnow() - window_start).total_seconds() if window_start else 0
+            buffer_stats[loc] = {
+                "buffered": len(RAW_BUFFER[loc]),
+                "window_elapsed": round(elapsed, 1),
+                "window_closes_in": round(WINDOW_SECONDS - elapsed, 1)
+            }
+    
     return {
         "status": "ok",
-        "time": datetime.utcnow().isoformat()
+        "time": datetime.utcnow().isoformat(),
+        "buffer_stats": buffer_stats,
+        "window_seconds": WINDOW_SECONDS,
     }
 
 
 # =========================
-# 🔥 RAW INGESTION (ffmpegreader hits this)
+# Background processor
+# =========================
+
+def process_window_async(location: str, docs: list[Dict]):
+    """
+    Processes one complete 15-second window.
+    """
+    
+    if not docs:
+        return
+    
+    print(f"🔄 Processing {location} window | docs={len(docs)}")
+    
+    try:
+        # Feature extraction on full window
+        df = process_raw_docs(docs)
+    except Exception as e:
+        print(f"❌ Feature extraction failed for {location}: {e}")
+        return
+
+    if df.empty:
+        print(f"⚠ Empty DataFrame after processing {location}")
+        return
+
+    # Save ALL observations from this window
+    save_stats(df)
+
+    accel_count = df["accel"].notna().sum() if "accel" in df.columns else 0
+    print(
+        f"✅ Saved {location} | rows={len(df)} "
+        f"| objects={df['object_id'].nunique()} "
+        f"| accel_populated={accel_count}/{len(df)}"
+    )
+
+
+# =========================
+# 🔥 RAW INGESTION
 # =========================
 
 @app.post("/raw-vehicles")
 def ingest_raw_vehicles(payload: List[Dict]):
     """
-    Receives raw vehicle docs from ffmpegreader.
-    Buffers livestream data and writes ONLY combined_stats to Mongo.
+    TRUE FIXED WINDOW:
+    - Accumulates data for exactly WINDOW_SECONDS
+    - Processes entire buffer once window closes
+    - Clears buffer and starts fresh
     """
 
     if not payload:
-        return {"received": 0, "processed_rows": 0}
+        return {"received": 0, "windows_closed": 0}
 
-    processed_rows = 0
+    now = datetime.utcnow()
+    windows_closed = 0
 
     # -------------------------
     # Buffer incoming docs
     # -------------------------
-    for doc in payload:
-        location = doc.get("location", "unknown")
+    with BUFFER_LOCK:
+        for doc in payload:
+            location = doc.get("location", "unknown")
 
-        ts = doc.get("timestamp")
-        if isinstance(ts, str):
-            ts = pd.to_datetime(ts, errors="coerce")
-        elif isinstance(ts, datetime):
-            ts = ts
-        else:
-            ts = pd.NaT
+            # Initialize window if needed
+            if location not in WINDOW_START:
+                WINDOW_START[location] = now
+                print(f"🆕 Started new window for {location}")
 
-        if pd.isna(ts):
-            continue
+            ts = doc.get("timestamp")
+            if isinstance(ts, str):
+                ts = pd.to_datetime(ts, errors="coerce")
+            elif isinstance(ts, datetime):
+                ts = ts
+            else:
+                ts = pd.NaT
 
-        doc["_parsed_ts"] = ts
-        RAW_BUFFER[location].append(doc)
+            if pd.isna(ts):
+                continue
+
+            doc["_parsed_ts"] = ts
+            RAW_BUFFER[location].append(doc)
 
     # -------------------------
-    # Process buffered data
+    # Check if windows should close
     # -------------------------
-    for location, buf in RAW_BUFFER.items():
-        if not buf:
-            continue
+    locations_to_process = []
+    
+    with BUFFER_LOCK:
+        for location in list(RAW_BUFFER.keys()):
+            buf = RAW_BUFFER[location]
+            if not buf:
+                continue
+            
+            window_start = WINDOW_START.get(location)
+            if window_start is None:
+                continue
+            
+            # Calculate window duration
+            elapsed = (now - window_start).total_seconds()
+            
+            # ⭐ KEY: Only process if window is COMPLETE
+            if elapsed >= WINDOW_SECONDS:
+                print(f"⏰ Window closed for {location} after {elapsed:.1f}s | docs={len(buf)}")
+                
+                # Freeze buffer
+                frozen_docs = list(buf)
+                locations_to_process.append((location, frozen_docs))
+                
+                # Clear buffer and restart window
+                RAW_BUFFER[location].clear()
+                WINDOW_START[location] = now
+                windows_closed += 1
 
-        newest_ts = buf[-1]["_parsed_ts"]
-        cutoff = newest_ts - timedelta(seconds=BUFFER_SECONDS)
-
-        # Drop old data outside buffer window
-        while buf and buf[0]["_parsed_ts"] < cutoff:
-            buf.popleft()
-
-        buffered_payload = list(buf)
-
-        # ⭐ NEW: avoid reprocessing already-consumed data
-        last_ts = LAST_PROCESSED_TS.get(location)
-        if last_ts is not None:
-            buffered_payload = [
-                d for d in buffered_payload
-                if d["_parsed_ts"] > last_ts
-            ]
-
-        # Not enough temporal support yet
-        if len(buffered_payload) < MIN_BUFFER_DOCS:
-            continue
-
-        # -------------------------
-        # Feature extraction
-        # -------------------------
-        try:
-            df = process_raw_docs(buffered_payload)
-        except KeyError as e:
-            print(f"⚠ Feature computation skipped: {e}")
-            continue
-
-
-        if df.empty:
-            continue
-
-        # ⭐ NEW: drop rows with no motion signal
-        if "speed_mps" in df.columns:
-            df = df[df["speed_mps"].notna()]
-
-        if df.empty:
-            continue
-
-        # -------------------------
-        # Persist derived stats
-        # -------------------------
-        save_stats(df)
-        processed_rows += len(df)
-
-        # ⭐ NEW: mark progress
-        LAST_PROCESSED_TS[location] = buffered_payload[-1]["_parsed_ts"]
+    # -------------------------
+    # Process closed windows asynchronously
+    # -------------------------
+    for location, docs in locations_to_process:
+        Thread(
+            target=process_window_async,
+            args=(location, docs),
+            daemon=True
+        ).start()
 
     return {
         "received": len(payload),
-        "processed_rows": processed_rows,
-        "buffer_seconds": BUFFER_SECONDS
+        "windows_closed": windows_closed,
+        "window_seconds": WINDOW_SECONDS,
     }
 
  
@@ -162,13 +207,12 @@ def ingest_raw_vehicles(payload: List[Dict]):
 # =========================
 
 @app.post("/incidents/run")
-def run_incident_detection(limit: int = 10_000):
+def run_incident_detection(location: str | None = None, limit: int = 10_000):
     """
     Runs incident detection on existing combined_stats.
-    NO feature computation happens here.
     """
 
-    df = load_all_combined_stats(limit=limit)
+    df = load_all_combined_stats(limit=limit, location=location)
 
     if df.empty:
         return {
