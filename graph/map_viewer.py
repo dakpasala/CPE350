@@ -22,8 +22,13 @@ import plotly.graph_objects as go
 
 
 # =========================
-# Config
+# Data source (injected by client.py)
 # =========================
+
+# This function will be replaced by client.py with actual shared memory accessor
+def get_latest_data():
+    """Placeholder - replaced by client.py at runtime."""
+    return None
 
 load_dotenv()
 MAPBOX_TOKEN = os.getenv("MAPBOX_ACCESS_TOKEN")
@@ -36,8 +41,6 @@ DEFAULT_ZOOM = 18
 
 HOST = os.getenv("HOST", "127.0.0.1")
 PORT = int(os.getenv("PORT", "8050"))
-
-DATA_FILE = Path(__file__).parent / "live_data.json"
 
 # Play through 15 seconds in ~15 seconds (1x speed)
 PLAYBACK_FPS = 10
@@ -57,26 +60,28 @@ INCIDENT_COLOR = "rgb(255,0,255)"
 # Data Processing
 # =========================
 
-def load_latest_data():
-    """Load and process window data into 1-second frames."""
-    if not DATA_FILE.exists():
+def process_window_data(raw_data):
+    """
+    Process raw window data from backend into 1-second frames.
+    
+    Args:
+        raw_data: Dict with vehicles, incidents, timestamp from backend
+    
+    Returns:
+        Processed data dict with frames, or None if invalid
+    """
+    if not raw_data:
         return None
     
     try:
-        # Get file modification time to detect changes
-        file_mtime = os.path.getmtime(DATA_FILE)
-        
-        with open(DATA_FILE, "r") as f:
-            data = json.load(f)
-        
-        vehicles = data.get("vehicles", [])
-        incidents = data.get("incidents", [])
-        timestamp = data.get("timestamp")
+        vehicles = raw_data.get("vehicles", [])
+        incidents = raw_data.get("incidents", [])
+        timestamp = raw_data.get("timestamp")
         
         if not vehicles:
             return None
         
-        # Sort all vehicles by timestamp first
+        # Sort all vehicles by timestamp
         vehicles_sorted = sorted(vehicles, key=lambda v: v.get("timestamp", ""))
         
         # Round timestamps to nearest second and group
@@ -90,7 +95,7 @@ def load_latest_data():
             # Parse timestamp and round to second
             try:
                 ts = pd.to_datetime(ts_str)
-                ts_rounded = ts.floor('S')  # Round down to nearest second
+                ts_rounded = ts.floor('S')
                 ts_key = ts_rounded.isoformat()
                 
                 frames_dict[ts_key]["vehicles"].append(v)
@@ -111,18 +116,16 @@ def load_latest_data():
                 "vehicles": frame_data["vehicles"]
             })
         
-        print(f"📊 Created {len(frames)} frames (1 per second) from {len(vehicles)} observations")
-        
         return {
             "vehicles": vehicles_sorted,
             "incidents": incidents,
             "timestamp": timestamp,
             "frames": frames,
-            "data_hash": file_mtime  # Use file modification time as hash
+            "data_id": timestamp  # Use timestamp as unique ID
         }
     
     except Exception as e:
-        print(f"⚠️  Error loading data: {e}")
+        print(f"⚠️  Error processing data: {e}")
         import traceback
         traceback.print_exc()
         return None
@@ -281,15 +284,16 @@ def build_figure(center, frame_vehicles, all_vehicles, incidents):
 # =========================
 
 def main():
-    # Wait for first data
+    # Wait for first data from shared memory
     print("⏳ Waiting for first data from server...")
     data = None
     while data is None:
-        data = load_latest_data()
+        raw_data = get_latest_data()
+        data = process_window_data(raw_data)
         if data is None:
             time.sleep(1)
     
-    print("✅ First data received! Starting playback...")
+    print(f"✅ First data received! {len(data['frames'])} frames from {len(data['vehicles'])} observations")
     
     center = compute_center(data["vehicles"])
     initial_frame = data["frames"][0]["vehicles"] if data["frames"] else []
@@ -350,18 +354,19 @@ def main():
         State("data-store", "data"),
     )
     def check_for_new_data(n, current_data):
-        """Check for new data every second. Reset frame when new data arrives."""
-        new_data = load_latest_data()
+        """Check shared memory for new data every second."""
+        raw_data = get_latest_data()
+        new_data = process_window_data(raw_data)
         
         if new_data is None:
-            return current_data, dash.no_update
+            return dash.no_update, dash.no_update
         
-        # Check if data changed
-        if current_data and new_data["data_hash"] == current_data.get("data_hash"):
+        # Check if data changed (compare timestamp)
+        if current_data and new_data["data_id"] == current_data.get("data_id"):
             return dash.no_update, dash.no_update
         
         # New data arrived! Reset to frame 0
-        print(f"📥 New data received! {len(new_data['frames'])} frames")
+        print(f"📥 New data! {len(new_data['frames'])} frames, {len(new_data['vehicles'])} observations")
         return new_data, 0
     
     @app.callback(

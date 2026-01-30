@@ -2,11 +2,8 @@
 """
 client.py
 
-Main launcher that starts BOTH:
-1. WebSocket client (receives data from backend)
-2. Map viewer (displays data on interactive map)
-
-Usage: python3 client.py
+Combined launcher with SHARED MEMORY (no JSON file).
+WebSocket receives data → stores in memory → map viewer reads it.
 """
 
 import asyncio
@@ -14,11 +11,12 @@ import threading
 import time
 import sys
 from pathlib import Path
+from threading import Lock
 
-# Import the map viewer
+# Import map viewer
 import map_viewer
 
-# Import WebSocket client logic
+# WebSocket imports
 import websockets
 import json
 from datetime import datetime
@@ -29,35 +27,55 @@ from datetime import datetime
 # =========================
 
 BACKEND_WS_URL = "ws://127.0.0.1:8000/data/stream"
-OUTPUT_FILE = Path(__file__).parent / "live_data.json"
 
 
 # =========================
-# WebSocket Client (runs in background thread)
+# SHARED MEMORY (instead of JSON file)
+# =========================
+
+SHARED_DATA = None
+SHARED_DATA_LOCK = Lock()
+
+
+def get_latest_data():
+    """Get latest data from shared memory (called by map viewer)."""
+    with SHARED_DATA_LOCK:
+        return SHARED_DATA
+
+
+def set_latest_data(data):
+    """Set latest data in shared memory (called by WebSocket)."""
+    global SHARED_DATA
+    with SHARED_DATA_LOCK:
+        SHARED_DATA = data
+
+
+# =========================
+# WebSocket Client
 # =========================
 
 async def websocket_receiver():
     """
-    Connect to backend WebSocket and save incoming data to JSON.
-    Runs in background thread.
+    Connect to backend WebSocket and store incoming data in memory.
     """
     print(f"🔌 [WebSocket] Connecting to {BACKEND_WS_URL}...")
     
     while True:
         try:
-            async with websockets.connect(BACKEND_WS_URL) as websocket:
+            async with websockets.connect(BACKEND_WS_URL, ping_interval=20) as websocket:
                 print(f"✅ [WebSocket] Connected to backend!")
-                print(f"💾 [WebSocket] Saving data to: {OUTPUT_FILE}")
                 print(f"🎯 [WebSocket] Waiting for 15-second windows...\n")
                 
-                # Send ping to keep connection alive
-                await websocket.send("ping")
-                
                 while True:
-                    # Receive message from backend
-                    message = await websocket.recv()
+                    # Receive message with timeout
+                    try:
+                        message = await asyncio.wait_for(websocket.recv(), timeout=30.0)
+                    except asyncio.TimeoutError:
+                        # Keep alive
+                        await websocket.send("ping")
+                        continue
                     
-                    # Handle pong responses
+                    # Handle pong
                     if message == "pong":
                         continue
                     
@@ -68,7 +86,7 @@ async def websocket_receiver():
                         print(f"❌ [WebSocket] Failed to parse JSON: {e}")
                         continue
                     
-                    # Check if it's window data
+                    # Check type
                     if data.get("type") != "window_complete":
                         print(f"⚠️  [WebSocket] Unknown message type: {data.get('type')}")
                         continue
@@ -83,14 +101,10 @@ async def websocket_receiver():
                     print(f"   Vehicles: {vehicle_count}")
                     print(f"   Incidents: {incident_count}")
                     
-                    # Save to JSON file
-                    with open(OUTPUT_FILE, "w") as f:
-                        json.dump(data, f, indent=2)
+                    # Store in SHARED MEMORY
+                    set_latest_data(data)
                     
-                    print(f"   ✅ Saved to {OUTPUT_FILE}\n")
-                    
-                    # Send ping to keep alive
-                    await websocket.send("ping")
+                    print(f"   ✅ Stored in memory\n")
         
         except websockets.exceptions.ConnectionClosed:
             print("❌ [WebSocket] Connection closed by server")
@@ -102,10 +116,7 @@ async def websocket_receiver():
 
 
 def run_websocket_client():
-    """
-    Run WebSocket client in asyncio event loop.
-    This runs in a separate thread.
-    """
+    """Run WebSocket client in asyncio event loop."""
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     loop.run_until_complete(websocket_receiver())
@@ -122,10 +133,14 @@ def main():
     print()
     print("Starting two components:")
     print("  1. WebSocket Client → Receives data from backend")
-    print("  2. Map Viewer       → Displays data on interactive map")
+    print("  2. Map Viewer       → Displays data with animation")
     print()
+    print("Using SHARED MEMORY (no JSON file)")
     print("=" * 70)
     print()
+    
+    # Inject the get_latest_data function into map_viewer module
+    map_viewer.get_latest_data = get_latest_data
     
     # Start WebSocket client in background thread
     print("🚀 [WebSocket] Starting background receiver...")
