@@ -107,17 +107,17 @@ def process_window_async(location: str, docs: list[Dict]):
     if not docs:
         return
     
-    print(f"🔄 Processing {location} window | docs={len(docs)}")
+    print(f"[Processing] {location} window | docs={len(docs)}")
     
     try:
         # Feature extraction on full window
         df = process_raw_docs(docs)
     except Exception as e:
-        print(f"❌ Feature extraction failed for {location}: {e}")
+        print(f"[ERROR] Feature extraction failed for {location}: {e}")
         return
 
     if df.empty:
-        print(f"⚠ Empty DataFrame after processing {location}")
+        print(f"[WARNING] Empty DataFrame after processing {location}")
         return
 
     # Save to DB for historical analysis
@@ -125,17 +125,17 @@ def process_window_async(location: str, docs: list[Dict]):
 
     accel_count = df["accel"].notna().sum() if "accel" in df.columns else 0
     print(
-        f"✅ Saved {location} | rows={len(df)} "
+        f"[SAVED] {location} | rows={len(df)} "
         f"| objects={df['object_id'].nunique()} "
         f"| accel_populated={accel_count}/{len(df)}"
     )
     
     # -------------------------
-    # 🚨 RUN INCIDENT DETECTION
+    # RUN INCIDENT DETECTION
     # -------------------------
     incidents = []
     try:
-        print(f"🔍 Running incident detection for {location}...")
+        print(f"[DETECTION] Running incident detection for {location}...")
         
         # Use the SAME dataframe we just processed (not from DB)
         df_scaled, _ = scale_per_location(df)
@@ -143,23 +143,23 @@ def process_window_async(location: str, docs: list[Dict]):
         incidents = detect_incidents(df_scaled, models)
         
         if incidents:
-            print(f"🚨 INCIDENTS DETECTED: {len(incidents)}")
+            print(f"[INCIDENTS] DETECTED: {len(incidents)}")
             
             # Save incidents to MongoDB
             saved_count = save_incidents(incidents)
-            print(f"💾 Saved {saved_count} incidents to DB")
+            print(f"[DB] Saved {saved_count} incidents to DB")
             
             # Log details
             for incident in incidents:
                 print(f"   - {incident['incident_type']} | severity={incident['severity']:.2f} | vehicles={incident['vehicles']}")
         else:
-            print(f"✅ No incidents detected")
+            print(f"[OK] No incidents detected")
             
     except Exception as e:
-        print(f"❌ Incident detection failed: {e}")
+        print(f"[ERROR] Incident detection failed: {e}")
     
     # -------------------------
-    # 🔥 SEND ENRICHED DATA TO FRONTEND
+    # SEND ENRICHED DATA TO FRONTEND
     # -------------------------
     # Create a mapping of which vehicles are in incidents
     incident_vehicle_map = {}
@@ -189,7 +189,7 @@ def process_window_async(location: str, docs: list[Dict]):
             "detected_type": row["detected_type"],
             "location": row["location"],
             "certainty": float(row["certainty"]) if pd.notna(row["certainty"]) else 0,
-            # 🔥 INCLUDE INCIDENT DATA IF THIS VEHICLE IS INVOLVED
+            # INCLUDE INCIDENT DATA IF THIS VEHICLE IS INVOLVED
             "incidents": incident_vehicle_map.get(int(vehicle_id), [])
         }
         
@@ -217,40 +217,40 @@ def broadcast_window_data(location: str, vehicles: List[Dict], incidents: List[D
         "incidents": incidents
     }
     
-    # 🔥 PRINT DATA BEING SENT
-    print(f"\n📤 DATA PREPARED FOR FRONTEND:")
+    # PRINT DATA BEING SENT
+    print(f"\n[FRONTEND] DATA PREPARED FOR FRONTEND:")
     print(f"   Location: {location}")
     print(f"   Timestamp: {message['timestamp']}")
     print(f"   Vehicle count: {len(vehicles)}")
     print(f"   Incident count: {len(incidents)}")
     
     if vehicles:
-        print(f"\n   📍 Sample vehicles (showing first 3):")
+        print(f"\n   [SAMPLE] Sample vehicles (showing first 3):")
         for v in vehicles[:3]:
-            print(f"      • ID={v['id']} | lat={v['lat']:.6f}, lon={v['lon']:.6f}")
-            print(f"        speed={v['speed_mps']:.2f} m/s, accel={v['accel']}, heading={v['heading_deg']:.1f}°")
+            print(f"      ID={v['id']} | lat={v['lat']:.6f}, lon={v['lon']:.6f}")
+            print(f"        speed={v['speed_mps']:.2f} m/s, accel={v['accel']}, heading={v['heading_deg']:.1f} deg")
             print(f"        type={v['detected_type']}, certainty={v['certainty']:.2f}")
             if v['incidents']:
-                print(f"        🚨 INVOLVED IN INCIDENTS: {v['incidents']}")
+                print(f"        [INCIDENT] INVOLVED IN INCIDENTS: {v['incidents']}")
     
     if incidents:
-        print(f"\n   🚨 Incidents detected:")
+        print(f"\n   [INCIDENTS] Incidents detected:")
         for inc in incidents:
-            print(f"      • {inc['incident_type']} | severity={inc['severity']:.2f}")
+            print(f"      {inc['incident_type']} | severity={inc['severity']:.2f}")
             print(f"        vehicles={inc['vehicles']} | time={inc['timestamp']}")
     
     # Check if any clients connected
     if not VEHICLE_STREAM_CLIENTS:
-        print(f"\n   ⚠️  No clients connected - data NOT sent\n")
+        print(f"\n   [WARNING] No clients connected - data NOT sent\n")
         return
     
     # Send to all connected clients
-    print(f"\n   ✅ Sending to {len(VEHICLE_STREAM_CLIENTS)} client(s)")
+    print(f"\n   [OK] Sending to {len(VEHICLE_STREAM_CLIENTS)} client(s)")
     
     # Add message to queue - WebSocket will pick it up
     with MESSAGE_QUEUE_LOCK:
         MESSAGE_QUEUE.append(message)
-        print(f"   📬 Added to message queue (queue size: {len(MESSAGE_QUEUE)})\n")
+        print(f"   [QUEUE] Added to message queue (queue size: {len(MESSAGE_QUEUE)})\n")
 
 
 def broadcast_vehicle_positions(payload: List[Dict]):
@@ -332,7 +332,7 @@ def broadcast_incidents(incidents: List[Dict]):
 
 
 # =========================
-# 🔥 RAW INGESTION
+# RAW INGESTION
 # =========================
 
 @app.post("/raw-vehicles")
@@ -361,7 +361,7 @@ def ingest_raw_vehicles(payload: List[Dict]):
             # Initialize window if needed
             if location not in WINDOW_START:
                 WINDOW_START[location] = now
-                print(f"🆕 Started new window for {location}")
+                print(f"[NEW] Started new window for {location}")
 
             ts = doc.get("timestamp")
             if isinstance(ts, str):
@@ -395,9 +395,9 @@ def ingest_raw_vehicles(payload: List[Dict]):
             # Calculate window duration
             elapsed = (now - window_start).total_seconds()
             
-            # ⭐ KEY: Only process if window is COMPLETE
+            # KEY: Only process if window is COMPLETE
             if elapsed >= WINDOW_SECONDS:
-                print(f"⏰ Window closed for {location} after {elapsed:.1f}s | docs={len(buf)}")
+                print(f"[WINDOW] Window closed for {location} after {elapsed:.1f}s | docs={len(buf)}")
                 
                 # Freeze buffer
                 frozen_docs = list(buf)
@@ -537,8 +537,8 @@ async def data_stream(websocket: WebSocket):
     with VEHICLE_STREAM_LOCK:
         VEHICLE_STREAM_CLIENTS.append(websocket)
     
-    print(f"📡 Data stream connected | total clients: {len(VEHICLE_STREAM_CLIENTS)}")
-    print(f"🔄 Starting message loop...")
+    print(f"[WS] Data stream connected | total clients: {len(VEHICLE_STREAM_CLIENTS)}")
+    print(f"[WS] Starting message loop...")
     
     loop_count = 0
     try:
@@ -547,21 +547,21 @@ async def data_stream(websocket: WebSocket):
             
             # Heartbeat every 50 loops (~2.5 seconds)
             if loop_count % 50 == 0:
-                print(f"   💓 WebSocket loop alive (iteration {loop_count})")
+                print(f"   [HEARTBEAT] WebSocket loop alive (iteration {loop_count})")
             
             # Check message queue for new data to send
             message_to_send = None
             with MESSAGE_QUEUE_LOCK:
                 if MESSAGE_QUEUE:
                     message_to_send = MESSAGE_QUEUE.pop(0)
-                    print(f"   📦 Found message in queue (remaining: {len(MESSAGE_QUEUE)})")
+                    print(f"   [QUEUE] Found message in queue (remaining: {len(MESSAGE_QUEUE)})")
             
             if message_to_send:
                 try:
                     await websocket.send_json(message_to_send)
-                    print(f"   ✅ Sent message to client!")
+                    print(f"   [OK] Sent message to client!")
                 except Exception as e:
-                    print(f"   ❌ Failed to send: {e}")
+                    print(f"   [ERROR] Failed to send: {e}")
                     break
             
             # Handle ping/pong with timeout
@@ -569,19 +569,19 @@ async def data_stream(websocket: WebSocket):
                 data = await asyncio.wait_for(websocket.receive_text(), timeout=0.05)
                 if data == "ping":
                     await websocket.send_text("pong")
-                    print(f"   🏓 Pong sent")
+                    print(f"   [PONG] Pong sent")
             except asyncio.TimeoutError:
                 pass
             except Exception as e:
-                print(f"   ⚠️  Receive error: {e}")
+                print(f"   [WARNING] Receive error: {e}")
                 break
             
             await asyncio.sleep(0.05)
     
     except WebSocketDisconnect:
-        print(f"📡 Data stream disconnected")
+        print(f"[WS] Data stream disconnected")
     except Exception as e:
-        print(f"📡 Data stream error: {e}")
+        print(f"[WS] Data stream error: {e}")
         import traceback
         traceback.print_exc()
     
@@ -589,4 +589,4 @@ async def data_stream(websocket: WebSocket):
         with VEHICLE_STREAM_LOCK:
             if websocket in VEHICLE_STREAM_CLIENTS:
                 VEHICLE_STREAM_CLIENTS.remove(websocket)
-        print(f"📡 Client removed | remaining: {len(VEHICLE_STREAM_CLIENTS)}")
+        print(f"[WS] Client removed | remaining: {len(VEHICLE_STREAM_CLIENTS)}")
