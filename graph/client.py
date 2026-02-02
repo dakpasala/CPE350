@@ -3,7 +3,7 @@
 client.py
 
 Combined launcher with SHARED MEMORY (no JSON file).
-WebSocket receives data → stores in memory → map viewer reads it.
+WebSocket receives data -> stores in memory -> map viewer reads it.
 """
 
 import asyncio
@@ -58,13 +58,13 @@ async def websocket_receiver():
     """
     Connect to backend WebSocket and store incoming data in memory.
     """
-    print(f"🔌 [WebSocket] Connecting to {BACKEND_WS_URL}...")
+    print(f"[WebSocket] Connecting to {BACKEND_WS_URL}...")
     
     while True:
         try:
             async with websockets.connect(BACKEND_WS_URL, ping_interval=20) as websocket:
-                print(f"✅ [WebSocket] Connected to backend!")
-                print(f"🎯 [WebSocket] Waiting for 15-second windows...\n")
+                print(f"[WebSocket] Connected to backend!")
+                print(f"[WebSocket] Waiting for 15-second windows...\n")
                 
                 while True:
                     # Receive message with timeout
@@ -83,12 +83,12 @@ async def websocket_receiver():
                     try:
                         data = json.loads(message)
                     except json.JSONDecodeError as e:
-                        print(f"❌ [WebSocket] Failed to parse JSON: {e}")
+                        print(f"[ERROR] [WebSocket] Failed to parse JSON: {e}")
                         continue
                     
                     # Check type
                     if data.get("type") != "window_complete":
-                        print(f"⚠️  [WebSocket] Unknown message type: {data.get('type')}")
+                        print(f"[WARNING] [WebSocket] Unknown message type: {data.get('type')}")
                         continue
                     
                     # Log received data
@@ -96,7 +96,7 @@ async def websocket_receiver():
                     vehicle_count = data.get("vehicle_count", 0)
                     incident_count = data.get("incident_count", 0)
                     
-                    print(f"📥 [WebSocket] Received window data:")
+                    print(f"[RECEIVED] [WebSocket] Received window data:")
                     print(f"   Timestamp: {timestamp}")
                     print(f"   Vehicles: {vehicle_count}")
                     print(f"   Incidents: {incident_count}")
@@ -104,14 +104,14 @@ async def websocket_receiver():
                     # Store in SHARED MEMORY
                     set_latest_data(data)
                     
-                    print(f"   ✅ Stored in memory\n")
+                    print(f"   [OK] Stored in memory\n")
         
         except websockets.exceptions.ConnectionClosed:
-            print("❌ [WebSocket] Connection closed by server")
+            print("[ERROR] [WebSocket] Connection closed by server")
         except Exception as e:
-            print(f"❌ [WebSocket] Error: {e}")
+            print(f"[ERROR] [WebSocket] Error: {e}")
         
-        print("🔄 [WebSocket] Reconnecting in 5 seconds...")
+        print("[RETRY] [WebSocket] Reconnecting in 5 seconds...")
         await asyncio.sleep(5)
 
 
@@ -128,12 +128,12 @@ def run_websocket_client():
 
 def main():
     print("=" * 70)
-    print(" " * 15 + "🚗 LIVE TRAFFIC MONITORING CLIENT 🚗")
+    print(" " * 15 + "LIVE TRAFFIC MONITORING CLIENT")
     print("=" * 70)
     print()
     print("Starting two components:")
-    print("  1. WebSocket Client → Receives data from backend")
-    print("  2. Map Viewer       → Displays data with animation")
+    print("  1. WebSocket Client -> Receives data from backend")
+    print("  2. Map Viewer       -> Displays data with animation")
     print()
     print("Using SHARED MEMORY (no JSON file)")
     print("=" * 70)
@@ -143,7 +143,7 @@ def main():
     map_viewer.get_latest_data = get_latest_data
     
     # Start WebSocket client in background thread
-    print("🚀 [WebSocket] Starting background receiver...")
+    print("[START] [WebSocket] Starting background receiver...")
     ws_thread = threading.Thread(target=run_websocket_client, daemon=True)
     ws_thread.start()
     
@@ -151,13 +151,13 @@ def main():
     time.sleep(2)
     
     # Start map viewer (this blocks - runs Dash server)
-    print("🚀 [Map] Starting interactive map viewer...")
+    print("[START] [Map] Starting interactive map viewer...")
     print()
     
     try:
         map_viewer.main()
     except KeyboardInterrupt:
-        print("\n\n👋 Shutting down client...")
+        print("\n\n[EXIT] Shutting down client...")
         sys.exit(0)
 
 
