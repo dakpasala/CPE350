@@ -14,17 +14,19 @@ import asyncio
 # =========================
 
 from combined_statistics import ( process_raw_docs, save_stats )
-from load_data import ( load_all_combined_stats )
 
 from incident_detection.engine import detect_incidents
 from incident_detection.models import load_latest_models
 from incident_detection.data import scale_per_location
 
-from incident_storage import (
+from data import (
     save_incidents, 
     get_recent_incidents, 
     get_incident_statistics,
-    get_incidents_by_timerange
+    get_incidents_by_timerange,
+    load_all_combined_stats,
+    delete_combined_stats,
+    delete_old_incidents
 )
 
 
@@ -523,6 +525,64 @@ def get_incidents_by_time(
         "incidents": incidents
     }
 
+@app.delete("/incidents")
+def delete_incidents_endpoint(days_old: int = 30):
+    """
+    Deletes incidents older than N days.
+
+    Query params:
+    - days_old: Delete incidents older than this many days (default 30)
+    """
+    deleted = delete_old_incidents(days_old=days_old)
+
+    return {
+        "deleted": deleted,
+        "days_old": days_old
+    }
+
+@app.get("/stats/combined")
+def get_combined_stats(
+    time_range: str = "day",
+    limit: int = 10_000,
+    location: str | None = None
+):
+    """
+    Retrieve combined stats within a time range.
+
+    Query params:
+    - time_range: "hour", "6hours", "12hours", "day", "week", "month"
+    - limit: Max rows to return (default 10,000)
+    - location: Filter by location (e.g. "patterson")
+    """
+    df = load_all_combined_stats(time_range=time_range, limit=limit, location=location)
+
+    if df.empty:
+        return {"count": 0, "time_range": time_range, "data": []}
+
+    # Convert to JSON-safe format (Timestamps -> ISO strings)
+    df["timestamp"] = df["timestamp"].dt.strftime("%Y-%m-%dT%H:%M:%S")
+
+    return {
+        "count": len(df),
+        "time_range": time_range,
+        "location": location,
+        "data": df.to_dict(orient="records")
+    }
+
+@app.delete("/stats/combined")
+def delete_combined_stats_endpoint(time_range: str = "day"):
+    """
+    Deletes combined_stats data within a time range.
+
+    Query params:
+    - time_range: "hour", "6hours", "12hours", "day", "week", "month"
+    """
+    deleted = delete_combined_stats(time_range=time_range)
+
+    return {
+        "deleted": deleted,
+        "time_range": time_range
+    }
 
 @app.websocket("/data/stream")
 async def data_stream(websocket: WebSocket):
