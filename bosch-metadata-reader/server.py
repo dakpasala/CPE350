@@ -54,6 +54,10 @@ WEBSOCKET_LOCK = Lock()
 VEHICLE_STREAM_CLIENTS: List[WebSocket] = []
 VEHICLE_STREAM_LOCK = Lock()
 
+# Message queue for sending data to WebSocket clients
+MESSAGE_QUEUE = []
+MESSAGE_QUEUE_LOCK = Lock()
+
 
 # =========================
 # App init
@@ -241,19 +245,12 @@ def broadcast_window_data(location: str, vehicles: List[Dict], incidents: List[D
         return
     
     # Send to all connected clients
-    print(f"\n   ✅ Sending to {len(VEHICLE_STREAM_CLIENTS)} client(s)\n")
+    print(f"\n   ✅ Sending to {len(VEHICLE_STREAM_CLIENTS)} client(s)")
     
-    with VEHICLE_STREAM_LOCK:
-        disconnected = []
-        for ws in VEHICLE_STREAM_CLIENTS:
-            try:
-                asyncio.create_task(ws.send_json(message))
-            except Exception:
-                disconnected.append(ws)
-        
-        # Remove disconnected clients
-        for ws in disconnected:
-            VEHICLE_STREAM_CLIENTS.remove(ws)
+    # Add message to queue - WebSocket will pick it up
+    with MESSAGE_QUEUE_LOCK:
+        MESSAGE_QUEUE.append(message)
+        print(f"   📬 Added to message queue (queue size: {len(MESSAGE_QUEUE)})\n")
 
 
 def broadcast_vehicle_positions(payload: List[Dict]):
@@ -534,38 +531,6 @@ def get_incidents_by_time(
 async def data_stream(websocket: WebSocket):
     """
     WebSocket endpoint for complete 15-second window data.
-    
-    Receives BOTH:
-    - Vehicle data (with features: speed, accel, heading, etc.)
-    - Incident detection results
-    - Mapping of which vehicles are involved in incidents
-    
-    Updates every 15 seconds when a window completes.
-    
-    Example (JavaScript):
-    ```
-    const ws = new WebSocket('ws://localhost:8000/data/stream');
-    ws.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        // data.type === "window_complete"
-        
-        // Render all vehicles on map
-        data.vehicles.forEach(vehicle => {
-            map.addMarker(vehicle.id, vehicle.lat, vehicle.lon);
-            
-            // Highlight if involved in incident
-            if (vehicle.incidents.length > 0) {
-                map.highlightVehicle(vehicle.id, 'red');
-                showAlert(vehicle.incidents[0]);
-            }
-        });
-        
-        // Show incident overlays
-        data.incidents.forEach(incident => {
-            map.addIncidentMarker(incident);
-        });
-    };
-    ```
     """
     await websocket.accept()
     
@@ -573,15 +538,52 @@ async def data_stream(websocket: WebSocket):
         VEHICLE_STREAM_CLIENTS.append(websocket)
     
     print(f"📡 Data stream connected | total clients: {len(VEHICLE_STREAM_CLIENTS)}")
+    print(f"🔄 Starting message loop...")
     
+    loop_count = 0
     try:
         while True:
-            data = await websocket.receive_text()
-            if data == "ping":
-                await websocket.send_text("pong")
+            loop_count += 1
+            
+            # Heartbeat every 50 loops (~2.5 seconds)
+            if loop_count % 50 == 0:
+                print(f"   💓 WebSocket loop alive (iteration {loop_count})")
+            
+            # Check message queue for new data to send
+            message_to_send = None
+            with MESSAGE_QUEUE_LOCK:
+                if MESSAGE_QUEUE:
+                    message_to_send = MESSAGE_QUEUE.pop(0)
+                    print(f"   📦 Found message in queue (remaining: {len(MESSAGE_QUEUE)})")
+            
+            if message_to_send:
+                try:
+                    await websocket.send_json(message_to_send)
+                    print(f"   ✅ Sent message to client!")
+                except Exception as e:
+                    print(f"   ❌ Failed to send: {e}")
+                    break
+            
+            # Handle ping/pong with timeout
+            try:
+                data = await asyncio.wait_for(websocket.receive_text(), timeout=0.05)
+                if data == "ping":
+                    await websocket.send_text("pong")
+                    print(f"   🏓 Pong sent")
+            except asyncio.TimeoutError:
+                pass
+            except Exception as e:
+                print(f"   ⚠️  Receive error: {e}")
+                break
+            
+            await asyncio.sleep(0.05)
     
     except WebSocketDisconnect:
         print(f"📡 Data stream disconnected")
+    except Exception as e:
+        print(f"📡 Data stream error: {e}")
+        import traceback
+        traceback.print_exc()
     
     finally:
         with VEHICLE_STREAM_LOCK:
