@@ -18,6 +18,7 @@ from combined_statistics import ( process_raw_docs, save_stats )
 from incident_detection.engine import detect_incidents
 from incident_detection.models import load_latest_models
 from incident_detection.data import scale_per_location
+from email_alert import send_incident_email
 
 from data import (
     save_incidents, 
