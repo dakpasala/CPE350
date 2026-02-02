@@ -32,7 +32,7 @@ MAX_WORKERS = max(2, int((os.cpu_count() or 4) * 0.75))
 MIN_POINTS_PER_OBJECT = 3      # ⭐ Used only for batch processing
 TIME_BUCKET = "1s"             # ⭐ timestamp alignment for livestream
 
-
+ 
 # =========================
 # Mongo helpers
 # =========================
