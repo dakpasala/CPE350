@@ -13,11 +13,8 @@ import asyncio
 # Local imports
 # =========================
 
-from combined_statistics import (
-    process_raw_docs,
-    save_stats,
-    load_all_combined_stats,
-)
+from combined_statistics import ( process_raw_docs, save_stats )
+from load_data import ( load_all_combined_stats )
 
 from incident_detection.engine import detect_incidents
 from incident_detection.models import load_latest_models
