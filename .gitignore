@@ -6,3 +6,5 @@ bosch-metadata-reader/combined_vehicle_stats_expandedNEW.csv
 graph/combined_vehicle_stats_expandedNEW.csv
 graph/connection.ini
 graph/output3.json
+visualization/connection.ini
+.venv
