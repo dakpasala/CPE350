@@ -35,7 +35,8 @@ MAPBOX_TOKEN = os.getenv("MAPBOX_ACCESS_TOKEN")
 if not MAPBOX_TOKEN:
     raise RuntimeError("MAPBOX_ACCESS_TOKEN is missing in .env")
 
-ANCHOR = {"lat": 34.442, "lon": -119.808}
+ANCHOR = {"lat": 34.441560, "lon": -119.808362}
+
 MAP_STYLE = "mapbox://styles/mapbox/satellite-streets-v12"
 DEFAULT_ZOOM = 18
 
@@ -95,7 +96,7 @@ def process_window_data(raw_data):
             # Parse timestamp and round to second
             try:
                 ts = pd.to_datetime(ts_str)
-                ts_rounded = ts.floor('S')
+                ts_rounded = ts.floor('10ms')
                 ts_key = ts_rounded.isoformat()
                 
                 frames_dict[ts_key]["vehicles"].append(v)
@@ -131,21 +132,29 @@ def process_window_data(raw_data):
         return None
 
 
-def compute_center(vehicles):
-    """Calculate map center."""
-    if not vehicles:
+def compute_center(vehicles, trim=0.1):
+    pts = [(v.get("lat"), v.get("lon")) for v in vehicles]
+    pts = [(lat, lon) for lat, lon in pts if lat is not None and lon is not None
+           and math.isfinite(lat) and math.isfinite(lon)]
+    if pts:
         return dict(ANCHOR)
-    
-    lats = [v["lat"] for v in vehicles if v.get("lat") is not None]
-    lons = [v["lon"] for v in vehicles if v.get("lon") is not None]
-    
-    if lats and lons:
-        return {"lat": sum(lats) / len(lats), "lon": sum(lons) / len(lons)}
-    
-    return dict(ANCHOR)
+
+    lats = sorted(lat for lat, _ in pts)
+    lons = sorted(lon for _, lon in pts)
+    n = len(pts)
+    k = int(n * trim)
+    if n - 2*k <= 0:
+        k = 0
+
+    lats2 = lats[k:n-k]
+    lons2 = lons[k:n-k]
+    return {"lat": sum(lats2)/len(lats2), "lon": sum(lons2)/len(lons2)}
 
 
-def build_figure(center, frame_vehicles, all_vehicles, incidents):
+
+
+
+def build_figure(center, frame_vehicles, all_vehicles, incidents, lat_off=0.0, lon_off=0.0):
     """Build map showing current frame with trajectory lines."""
     fig = go.Figure()
     
@@ -154,6 +163,9 @@ def build_figure(center, frame_vehicles, all_vehicles, incidents):
     for v in all_vehicles:
         obj_id = str(v.get("id"))
         lat, lon = v.get("lat"), v.get("lon")
+        if lat is not None and lon is not None:
+            lat = lat + lat_off
+            lon = lon + lon_off
         ts = v.get("timestamp")
         if lat is not None and lon is not None and ts:
             trajectories[obj_id].append((ts, lat, lon))
@@ -181,9 +193,11 @@ def build_figure(center, frame_vehicles, all_vehicles, incidents):
         
         for v in frame_vehicles:
             lat, lon = v.get("lat"), v.get("lon")
-            
             if lat is None or lon is None:
                 continue
+            lat = lat + lat_off
+            lon = lon + lon_off
+
             if not (math.isfinite(lat) and math.isfinite(lon)):
                 continue
             
@@ -196,7 +210,7 @@ def build_figure(center, frame_vehicles, all_vehicles, incidents):
                 typ = str(v.get("detected_type", "unknown")).lower()
                 color = COLOR_MAP.get(typ, DEFAULT_COLOR)
             
-            lats.append(lat)
+            lats.append(lat)  # Slight offset for visibility
             lons.append(lon)
             colors.append(color)
             texts.append(typ)
@@ -215,7 +229,7 @@ def build_figure(center, frame_vehicles, all_vehicles, incidents):
             lon=lons,
             lat=lats,
             mode="markers",
-            marker=dict(size=14, opacity=0.95, color=colors),
+            marker=dict(size=7, opacity=0.95, color=colors),
             text=texts,
             customdata=customdata,
             hovertemplate=(
@@ -246,7 +260,9 @@ def build_figure(center, frame_vehicles, all_vehicles, incidents):
             lat, lon = first_vehicle.get("lat"), first_vehicle.get("lon")
             if lat is None or lon is None:
                 continue
-            
+            lat = lat + lat_off
+            lon = lon + lon_off
+
             inc_lats.append(lat)
             inc_lons.append(lon)
             inc_texts.append(f"{inc['incident_type']}<br>Severity: {inc['severity']:.2f}")
@@ -328,10 +344,27 @@ def main():
             ]),
             
             html.Div("Camera Pitch", style={"marginTop": "20px"}),
-            dcc.Slider(0, 85, step=1, value=60, id="pitch-slider"),
+            dcc.Slider(0, 85, step=10, value=60, id="pitch-slider"),
             
             html.Div("Camera Bearing", style={"marginTop": "10px"}),
-            dcc.Slider(0, 360, step=1, value=30, id="bearing-slider"),
+            dcc.Slider(0, 360, step=15, value=30, id="bearing-slider"),
+
+            html.Div("Latitude offset (degrees)", style={"marginTop": "20px"}),
+            dcc.Slider(
+                id="lat-offset-slider",
+                min=-0.001, max=0.001, step=0.00001, value=0.0,
+                tooltip={"placement": "bottom", "always_visible": True}
+            ),
+
+            html.Div("Longitude offset (degrees)", style={"marginTop": "10px"}),
+            dcc.Slider(
+                id="lon-offset-slider",
+                min=-0.001, max=0.001, step=0.00001, value=0.0,
+                tooltip={"placement": "bottom", "always_visible": True}
+            ),
+
+            html.Div(id="offset-display", style={"marginTop": "10px", "opacity": 0.8}),
+
         ], style={"marginTop": "20px"}),
         
         dcc.Interval(id="animation-interval", interval=FRAME_INTERVAL_MS, n_intervals=0),
