@@ -7,7 +7,7 @@ Handles storage and retrieval of detected incidents in MongoDB.
 
 import configparser
 import pymongo
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Dict
 import pandas as pd
 
@@ -260,39 +260,85 @@ def create_indexes():
     
     print("✅ Incident collection indexes created")
 
-
 # =========================
-# CLI for testing
+# load stats
 # =========================
 
-if __name__ == "__main__":
-    import argparse
-    
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--setup", action="store_true", help="Create indexes")
-    parser.add_argument("--stats", action="store_true", help="Show statistics")
-    parser.add_argument("--recent", type=int, help="Show N recent incidents")
-    parser.add_argument("--location", type=str, help="Filter by location")
-    
-    args = parser.parse_args()
-    
-    if args.setup:
-        create_indexes()
-    
-    if args.stats:
-        stats = get_incident_statistics(location=args.location)
-        print(f"\n📊 Incident Statistics")
-        print(f"   Total: {stats['total']}")
-        for itype, data in stats["by_type"].items():
-            print(f"\n   {itype}:")
-            print(f"      Count: {data['count']}")
-            print(f"      Avg Severity: {data['avg_severity']}")
-            print(f"      Max Severity: {data['max_severity']}")
-    
-    if args.recent:
-        incidents = get_recent_incidents(limit=args.recent, location=args.location)
-        print(f"\n📋 Recent Incidents ({len(incidents)}):")
-        for inc in incidents:
-            print(f"\n   {inc['timestamp']} | {inc['incident_type']} | {inc['location']}")
-            print(f"      Severity: {inc['severity']:.2f}")
-            print(f"      Vehicles: {inc['vehicles']}")
+# Time range options
+TIME_RANGES = {
+    "hour":      timedelta(hours=1),
+    "6hours":    timedelta(hours=6),
+    "12hours":   timedelta(hours=12),
+    "day":       timedelta(days=1),
+    "week":      timedelta(weeks=1),
+    "month":     timedelta(days=30),
+}
+
+
+def load_all_combined_stats(
+    time_range: str = "day",
+    limit: int = 10_000,
+    location: str | None = None
+):
+    """
+    Retrieve combined stats within a time range.
+
+    Args:
+        time_range: One of "hour", "6hours", "12hours", "day", "week", "month"
+        limit: Max rows to return (default 10,000)
+        location: Filter by location (e.g. "patterson")
+
+    Returns:
+        DataFrame sorted by timestamp (newest first)
+    """
+    if time_range not in TIME_RANGES:
+        raise ValueError(f"Invalid time_range '{time_range}'. Must be one of: {list(TIME_RANGES.keys())}")
+
+    db = _get_db()
+
+    cutoff = datetime.utcnow() - TIME_RANGES[time_range]
+
+    query = {"timestamp": {"$gte": cutoff}}
+
+    if location is not None:
+        query["location"] = location
+
+    cursor = (
+        db["combined_stats"]
+        .find(query)
+        .sort("timestamp", -1)
+        .limit(limit)
+    )
+
+    data = list(cursor)
+    if not data:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(data).drop(columns=["_id"], errors="ignore")
+    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+    return df
+
+def delete_combined_stats(time_range: str = "day") -> int:
+    """
+    Deletes combined_stats data within a time range.
+
+    Args:
+        time_range: One of "hour", "day", "week", "month"
+
+    Returns:
+        Number of documents deleted
+    """
+    if time_range not in TIME_RANGES:
+        raise ValueError(f"Invalid time_range '{time_range}'. Must be one of: {list(TIME_RANGES.keys())}")
+
+    db = _get_db()
+    coll = db["combined_stats"]
+
+    cutoff = datetime.utcnow() - TIME_RANGES[time_range]
+
+    result = coll.delete_many({
+        "timestamp": {"$gte": cutoff}
+    })
+
+    print(f"[DELETE] Deleted {result.deleted_count} combined_stats documents from last {time_range}")
+    return result.deleted_count

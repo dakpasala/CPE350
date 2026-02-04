@@ -32,7 +32,7 @@ MAX_WORKERS = max(2, int((os.cpu_count() or 4) * 0.75))
 MIN_POINTS_PER_OBJECT = 3      # ⭐ Used only for batch processing
 TIME_BUCKET = "1s"             # ⭐ timestamp alignment for livestream
 
-
+ 
 # =========================
 # Mongo helpers
 # =========================
@@ -396,33 +396,6 @@ def run_batches(batch_size):
 
         if len(raw) < batch_size:
             break
-
-
-def load_all_combined_stats(limit: int = 10_000, location: str | None = None):
-    config = configparser.ConfigParser()
-    config.read("connection.ini")
-
-    client = pymongo.MongoClient(config["DEFAULT"]["database"])
-    db = client["camera-counts"]
-
-    query = {}
-    if location is not None:
-        query["location"] = location
-
-    cursor = (
-        db["combined_stats"]
-        .find(query)
-        .sort("timestamp", -1)
-        .limit(limit)
-    )
-
-    data = list(cursor)
-    if not data:
-        return pd.DataFrame()
-
-    df = pd.DataFrame(data).drop(columns=["_id"], errors="ignore")
-    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
-    return df
 
 
 # =========================
