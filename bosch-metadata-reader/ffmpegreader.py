@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-FFMPEG METADATA XML STREAM PARSER (FINAL CLEAN VERSION + FRAME SKIPPING)
+FFMPEG METADATA XML STREAM PARSER (METADATA ONLY)
 
-- Parses Bosch XML metadata from a file (output1.xml for now) or a stream
+- Parses Bosch XML metadata from RTSP stream
 - Tracks multiple timestamps per ObjectId
 - Preserves frame-by-frame updates internally
 - Inserts into MongoDB *every Nth frame* (frame skipping)
@@ -14,6 +14,8 @@ from collections import defaultdict
 from typing import Dict, List
 import sys
 import os
+import subprocess
+import re
 
 from camera_object import CameraObject
 from pointSearch import whichLane, setLanePairsFromDBList
@@ -61,7 +63,7 @@ timestamp = None
 openObject = False
 currentObject: CameraObject | None = None
 
-# ⭐ NEW: frame skipping counter
+# ⭐ Frame skipping counter
 frame_counter = 0
 FRAME_SKIP = 5   # save 1 out of every 5 frames
 
@@ -190,9 +192,6 @@ def parse_element(event, elem):
 # -------------------------------------------------------
 # 3. XML STREAM PARSER (LIVE RTSP URL VIA FFMPEG)
 # -------------------------------------------------------
-
-import subprocess
-import re
 
 # Build RTSP URL from camera_info
 rtsp_url = f'rtsp://{camera_info["url"]}/rtsp_tunnel?p=0&line=1&inst=1&vcd=2'
