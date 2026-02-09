@@ -22,7 +22,7 @@ frame_width = 640
 frame_height = 480
 
 # Local video file path (change this to use different videos)
-video_path = "../bosch-metadata-reader/videos/youtube.mp4"
+video_path = "../bosch-metadata-reader/videos/patterson_20260206_113837.mp4"
 
 # Alternative: Use live stream instead
 # stream_url = "http://kamera.mikulov.cz:8888/mjpg/video.mjpg"
