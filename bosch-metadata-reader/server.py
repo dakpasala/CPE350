@@ -45,6 +45,7 @@ from video_storage import (
 from video_buffer import (
     add_video_to_buffer,
     get_video_from_buffer,
+    get_latest_video_from_buffer,
     remove_video_from_buffer,
     cleanup_old_videos,
     get_buffer_stats
@@ -142,6 +143,8 @@ def ingest_raw_vehicles(payload: List[Dict]):
 
     now = datetime.utcnow()
     windows_closed = 0
+    
+    print(f"\n[RAW DATA] Received {len(payload)} vehicle records")
 
     # -------------------------
     # Buffer incoming docs
@@ -228,15 +231,20 @@ def process_window_async(location: str, docs: list[Dict]):
     """
     
     if not docs:
+        print(f"[PROCESSING] {location} - No documents to process")
         return
     
-    print(f"[Processing] {location} window | docs={len(docs)}")
+    print(f"[PROCESSING] {location} window | docs={len(docs)}")
+    print(f"[DEBUG] Starting feature extraction...")
     
     try:
         # Feature extraction on full window
         df = process_raw_docs(docs)
+        print(f"[DEBUG] Feature extraction complete | df.shape={df.shape}")
     except Exception as e:
         print(f"[ERROR] Feature extraction failed for {location}: {e}")
+        import traceback
+        traceback.print_exc()
         return
 
     if df.empty:
@@ -253,9 +261,17 @@ def process_window_async(location: str, docs: list[Dict]):
         f"| accel_populated={accel_count}/{len(df)}"
     )
     
+    print(f"[DEBUG] About to run incident detection...")
+    
     # -------------------------
     # RUN INCIDENT DETECTION
     # -------------------------
+    
+    # 🧪 TEST MODE - Always save videos (comment out for production)
+    TEST_MODE_SAVE_ALL_VIDEOS = True  # Set to False in production
+    
+    print(f"[DEBUG] TEST_MODE_SAVE_ALL_VIDEOS = {TEST_MODE_SAVE_ALL_VIDEOS}")
+    
     incidents = []
     try:
         print(f"[DETECTION] Running incident detection for {location}...")
@@ -273,12 +289,54 @@ def process_window_async(location: str, docs: list[Dict]):
             print(f"[DB] Saved {saved_count} incidents to DB")
             
             # 🎥 SAVE VIDEO TO GRIDFS (only if incidents detected!)
-            # Get the window timestamp (use first doc timestamp)
-            window_timestamp = docs[0].get("_parsed_ts")
-            if window_timestamp:
-                video_data = get_video_from_buffer(location, window_timestamp)
+            # Get the latest video for this camera from buffer
+            video_data = get_latest_video_from_buffer(location)
+            
+            if video_data:
+                # Save to GridFS
+                video_id = save_video_to_gridfs(
+                    file_content=video_data["file_content"],
+                    filename=video_data["filename"],
+                    camera=video_data["camera"],
+                    timestamp=video_data["timestamp"].strftime("%Y%m%d_%H%M%S"),
+                    duration=video_data["duration"]
+                )
                 
-                if video_data:
+                # Link incidents to this video
+                for incident in incidents:
+                    link_video_to_incident(video_id, str(incident["_id"]))
+                
+                print(f"   🎥 Video SAVED to GridFS: {video_id}")
+                
+                # Remove from buffer
+                buffer_key = f"{location}_{video_data['timestamp'].strftime('%Y%m%d_%H%M%S')}"
+                remove_video_from_buffer(buffer_key)
+            else:
+                print(f"   ⚠️ No video found in buffer for this window")
+            
+            # Log details
+            for incident in incidents:
+                print(f"   - {incident['incident_type']} | severity={incident['severity']:.2f} | vehicles={incident['vehicles']}")
+        else:
+            print(f"[OK] No incidents detected")
+            
+            print(f"[DEBUG] Checking for video to discard...")
+            
+            # Show what's in the buffer
+            buffer_stats = get_buffer_stats()
+            print(f"[DEBUG] Buffer contains {buffer_stats['count']} video(s)")
+            
+            # 🗑️ GET LATEST VIDEO FROM BUFFER (simpler than exact timestamp matching)
+            video_data = get_latest_video_from_buffer(location)
+            print(f"[DEBUG] get_latest_video_from_buffer returned: {video_data is not None}")
+            
+            if video_data:
+                buffer_key = f"{location}_{video_data['timestamp'].strftime('%Y%m%d_%H%M%S')}"
+                
+                # 🧪 TEST MODE: Save video even without incidents
+                if TEST_MODE_SAVE_ALL_VIDEOS:
+                    print(f"   🧪 TEST MODE: Saving video anyway (no incidents)")
+                    
                     # Save to GridFS
                     video_id = save_video_to_gridfs(
                         file_content=video_data["file_content"],
@@ -288,31 +346,12 @@ def process_window_async(location: str, docs: list[Dict]):
                         duration=video_data["duration"]
                     )
                     
-                    # Link incidents to this video
-                    for incident in incidents:
-                        link_video_to_incident(video_id, str(incident["_id"]))
-                    
-                    print(f"   🎥 Video SAVED to GridFS: {video_id}")
-                    
-                    # Remove from buffer
-                    buffer_key = f"{location}_{video_data['timestamp'].strftime('%Y%m%d_%H%M%S')}"
-                    remove_video_from_buffer(buffer_key)
-                else:
-                    print(f"   ⚠️ No video found in buffer for this window")
-            
-            # Log details
-            for incident in incidents:
-                print(f"   - {incident['incident_type']} | severity={incident['severity']:.2f} | vehicles={incident['vehicles']}")
-        else:
-            print(f"[OK] No incidents detected")
-            
-            # 🗑️ DELETE VIDEO FROM BUFFER (no incidents = no need to save)
-            window_timestamp = docs[0].get("_parsed_ts")
-            if window_timestamp:
-                video_data = get_video_from_buffer(location, window_timestamp)
-                if video_data:
-                    buffer_key = f"{location}_{video_data['timestamp'].strftime('%Y%m%d_%H%M%S')}"
-                    remove_video_from_buffer(buffer_key)
+                    print(f"   🎥 Video SAVED to GridFS (TEST MODE): {video_id}")
+                
+                # Always remove from buffer
+                remove_video_from_buffer(buffer_key)
+                
+                if not TEST_MODE_SAVE_ALL_VIDEOS:
                     print(f"   🗑️ Video discarded (no incidents)")
             
     except Exception as e:
@@ -524,6 +563,11 @@ async def upload_video(
         # Read video file content
         file_content = await file.read()
         
+        print(f"\n[VIDEO UPLOAD] Received video:")
+        print(f"   Camera: {camera}")
+        print(f"   Timestamp: {timestamp}")
+        print(f"   Size: {len(file_content) / 1024 / 1024:.2f} MB")
+        
         # Add to buffer (not GridFS yet!)
         buffer_key = add_video_to_buffer(
             file_content=file_content,
@@ -535,6 +579,10 @@ async def upload_video(
         
         # Clean up old buffered videos
         cleanup_old_videos()
+        
+        # Show current buffer state
+        buffer_stats = get_buffer_stats()
+        print(f"   Buffer now has {buffer_stats['count']} video(s)")
         
         return {
             "status": "buffered",

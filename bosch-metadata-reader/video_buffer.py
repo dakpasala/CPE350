@@ -48,9 +48,17 @@ def add_video_to_buffer(
     Returns:
         buffer_key: Unique key for this video
     """
-    # Parse timestamp
+    # Parse timestamp as LOCAL time
     try:
-        video_timestamp = datetime.strptime(timestamp_str, "%Y%m%d_%H%M%S")
+        video_timestamp_local = datetime.strptime(timestamp_str, "%Y%m%d_%H%M%S")
+        
+        # Convert to UTC to match data timestamps
+        from datetime import timezone
+        # Assume PST (UTC-8)
+        utc_offset = timedelta(hours=8)
+        video_timestamp = video_timestamp_local + utc_offset
+        
+        print(f"[VIDEO BUFFER] Local time: {video_timestamp_local}, UTC time: {video_timestamp}")
     except ValueError:
         video_timestamp = datetime.utcnow()
     
@@ -71,6 +79,37 @@ def add_video_to_buffer(
     return buffer_key
 
 
+def get_latest_video_from_buffer(camera: str) -> Optional[Dict]:
+    """
+    Retrieves the most recent video from buffer for a given camera.
+    
+    Args:
+        camera: Camera location
+    
+    Returns:
+        Video data dict or None
+    """
+    with BUFFER_LOCK:
+        # Find all videos for this camera
+        camera_videos = [
+            (key, video_data) 
+            for key, video_data in VIDEO_BUFFER.items() 
+            if video_data["camera"] == camera
+        ]
+        
+        if not camera_videos:
+            return None
+        
+        # Sort by timestamp (newest first) and return the most recent
+        camera_videos.sort(key=lambda x: x[1]["timestamp"], reverse=True)
+        latest_key, latest_video = camera_videos[0]
+        
+        print(f"[VIDEO BUFFER] Found latest video for {camera}: {latest_key}")
+        return latest_video
+    
+    return None
+
+
 def get_video_from_buffer(camera: str, timestamp: datetime) -> Optional[Dict]:
     """
     Retrieves a video from buffer by camera and timestamp.
@@ -82,6 +121,10 @@ def get_video_from_buffer(camera: str, timestamp: datetime) -> Optional[Dict]:
     Returns:
         Video data dict or None
     """
+    # Make timestamp timezone-naive if needed
+    if hasattr(timestamp, 'tzinfo') and timestamp.tzinfo is not None:
+        timestamp = timestamp.replace(tzinfo=None)
+    
     with BUFFER_LOCK:
         # Try to find video that covers this timestamp
         for key, video_data in VIDEO_BUFFER.items():
@@ -89,6 +132,10 @@ def get_video_from_buffer(camera: str, timestamp: datetime) -> Optional[Dict]:
                 continue
             
             video_start = video_data["timestamp"]
+            # Make video_start timezone-naive if needed
+            if hasattr(video_start, 'tzinfo') and video_start.tzinfo is not None:
+                video_start = video_start.replace(tzinfo=None)
+            
             video_end = video_start + timedelta(seconds=video_data["duration"])
             
             # Check if timestamp falls within video window

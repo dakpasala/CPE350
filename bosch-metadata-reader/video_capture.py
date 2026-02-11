@@ -36,7 +36,7 @@ VIDEO_OUTPUT_DIR = "/Users/dakshesh/CPE 350/bosch-metadata-reader/videos"
 API_URL = "http://localhost:8000/videos"
 
 # 🧪 TEST MODE - Set to True to keep videos locally (don't delete)
-TEST_MODE = True  # Change to True to view videos locally
+TEST_MODE = False  # Change to True to view videos locally
 
 # Create output directory
 os.makedirs(VIDEO_OUTPUT_DIR, exist_ok=True)

@@ -18,6 +18,7 @@ import pandas as pd
 import dash
 from dash import Dash, dcc, html
 from dash.dependencies import Input, Output, State
+from dash.exceptions import PreventUpdate
 import plotly.graph_objects as go
 
 
@@ -35,7 +36,8 @@ MAPBOX_TOKEN = os.getenv("MAPBOX_ACCESS_TOKEN")
 if not MAPBOX_TOKEN:
     raise RuntimeError("MAPBOX_ACCESS_TOKEN is missing in .env")
 
-ANCHOR = {"lat": 34.442, "lon": -119.808}
+ANCHOR = {"lat": 34.441560, "lon": -119.808362}
+
 MAP_STYLE = "mapbox://styles/mapbox/satellite-streets-v12"
 DEFAULT_ZOOM = 18
 
@@ -95,7 +97,7 @@ def process_window_data(raw_data):
             # Parse timestamp and round to second
             try:
                 ts = pd.to_datetime(ts_str)
-                ts_rounded = ts.floor('S')
+                ts_rounded = ts.floor('10ms')
                 ts_key = ts_rounded.isoformat()
                 
                 frames_dict[ts_key]["vehicles"].append(v)
@@ -131,21 +133,30 @@ def process_window_data(raw_data):
         return None
 
 
-def compute_center(vehicles):
-    """Calculate map center."""
-    if not vehicles:
+def compute_center(vehicles, trim=0.1):
+    pts = [(v.get("lat"), v.get("lon")) for v in vehicles]
+    pts = [(lat, lon) for lat, lon in pts if lat is not None and lon is not None
+           and math.isfinite(lat) and math.isfinite(lon)]
+    if not pts:
         return dict(ANCHOR)
-    
-    lats = [v["lat"] for v in vehicles if v.get("lat") is not None]
-    lons = [v["lon"] for v in vehicles if v.get("lon") is not None]
-    
-    if lats and lons:
-        return {"lat": sum(lats) / len(lats), "lon": sum(lons) / len(lons)}
-    
-    return dict(ANCHOR)
+
+    lats = sorted(lat for lat, _ in pts)
+    lons = sorted(lon for _, lon in pts)
+    n = len(pts)
+    k = int(n * trim)
+    if n - 2 * k <= 0:
+        k = 0
+
+    lats2 = lats[k:n-k]
+    lons2 = lons[k:n-k]
+    return {"lat": sum(lats2) / len(lats2), "lon": sum(lons2) / len(lons2)}
 
 
-def build_figure(center, frame_vehicles, all_vehicles, incidents):
+
+
+
+
+def build_figure(center, frame_vehicles, all_vehicles, incidents, lat_off=0.0, lon_off=0.0):
     """Build map showing current frame with trajectory lines."""
     fig = go.Figure()
     
@@ -154,6 +165,9 @@ def build_figure(center, frame_vehicles, all_vehicles, incidents):
     for v in all_vehicles:
         obj_id = str(v.get("id"))
         lat, lon = v.get("lat"), v.get("lon")
+        if lat is not None and lon is not None:
+            lat = lat + lat_off
+            lon = lon + lon_off
         ts = v.get("timestamp")
         if lat is not None and lon is not None and ts:
             trajectories[obj_id].append((ts, lat, lon))
@@ -181,9 +195,11 @@ def build_figure(center, frame_vehicles, all_vehicles, incidents):
         
         for v in frame_vehicles:
             lat, lon = v.get("lat"), v.get("lon")
-            
             if lat is None or lon is None:
                 continue
+            lat = lat + lat_off
+            lon = lon + lon_off
+
             if not (math.isfinite(lat) and math.isfinite(lon)):
                 continue
             
@@ -196,7 +212,7 @@ def build_figure(center, frame_vehicles, all_vehicles, incidents):
                 typ = str(v.get("detected_type", "unknown")).lower()
                 color = COLOR_MAP.get(typ, DEFAULT_COLOR)
             
-            lats.append(lat)
+            lats.append(lat)  # Slight offset for visibility
             lons.append(lon)
             colors.append(color)
             texts.append(typ)
@@ -215,7 +231,7 @@ def build_figure(center, frame_vehicles, all_vehicles, incidents):
             lon=lons,
             lat=lats,
             mode="markers",
-            marker=dict(size=14, opacity=0.95, color=colors),
+            marker=dict(size=7, opacity=0.95, color=colors),
             text=texts,
             customdata=customdata,
             hovertemplate=(
@@ -246,7 +262,9 @@ def build_figure(center, frame_vehicles, all_vehicles, incidents):
             lat, lon = first_vehicle.get("lat"), first_vehicle.get("lon")
             if lat is None or lon is None:
                 continue
-            
+            lat = lat + lat_off
+            lon = lon + lon_off
+
             inc_lats.append(lat)
             inc_lons.append(lon)
             inc_texts.append(f"{inc['incident_type']}<br>Severity: {inc['severity']:.2f}")
@@ -328,10 +346,28 @@ def main():
             ]),
             
             html.Div("Camera Pitch", style={"marginTop": "20px"}),
-            dcc.Slider(0, 85, step=1, value=60, id="pitch-slider"),
+            dcc.Slider(0, 85, step=10, value=60, id="pitch-slider"),
             
             html.Div("Camera Bearing", style={"marginTop": "10px"}),
-            dcc.Slider(0, 360, step=1, value=30, id="bearing-slider"),
+            dcc.Slider(0, 360, step=15, value=30, id="bearing-slider"),
+
+            html.Div("Latitude offset (degrees)", style={"marginTop": "20px"}),
+            
+            dcc.Slider(
+                id="lat-offset-slider",
+                min=-0.001, max=0.001, step=0.00001, value=0.0, marks = {-0.001: "-0.001", -0.0005: "-0.0005", 0.0: "0", 0.0005: "+0.0005", 0.001: "+0.001"},
+                tooltip={"placement": "bottom", "always_visible": True}
+            ),
+
+            html.Div("Longitude offset (degrees)", style={"marginTop": "10px"}),
+            dcc.Slider(
+                id="lon-offset-slider",
+                min=-0.001, max=0.001, step=0.00001, value=0.0, marks = {-0.001: "-0.001", -0.0005: "-0.0005", 0.0: "0", 0.0005: "+0.0005", 0.001: "+0.001"},
+                tooltip={"placement": "bottom", "always_visible": True}
+            ),
+
+            html.Div(id="offset-display", style={"marginTop": "10px", "opacity": 0.8}),
+
         ], style={"marginTop": "20px"}),
         
         dcc.Interval(id="animation-interval", interval=FRAME_INTERVAL_MS, n_intervals=0),
@@ -340,6 +376,48 @@ def main():
         dcc.Store(id="data-store", data=data),
         dcc.Store(id="current-frame", data=0),
         dcc.Store(id="playing", data=True),
+
+        # Add these stores (near your existing dcc.Store lines)
+        dcc.Store(id="alert-active", data=False),
+        dcc.Store(id="last-alerted-data-id", data=None),
+
+        # Add this modal overlay near the end of layout (but still inside the main Div children list)
+        html.Div(
+            id="incident-modal",
+            style={
+                "display": "none",              # toggled by callback
+                "position": "fixed",
+                "top": 0, "left": 0,
+                "width": "100vw",
+                "height": "100vh",
+                "backgroundColor": "rgba(0,0,0,0.6)",
+                "zIndex": 9999,
+                "alignItems": "center",
+                "justifyContent": "center",
+            },
+            children=[
+                html.Div(
+                    style={
+                        "backgroundColor": "white",
+                        "padding": "24px",
+                        "borderRadius": "12px",
+                        "width": "480px",
+                        "boxShadow": "0 10px 30px rgba(0,0,0,0.25)",
+                        "textAlign": "center",
+                    },
+                    children=[
+                        html.H2("🚨 Accident detected", style={"marginTop": 0}),
+                        html.Div(id="incident-modal-text", style={"marginBottom": "18px"}),
+                        html.Button("OK", id="incident-ok-btn", n_clicks=0, style={
+                            "fontSize": "16px",
+                            "padding": "10px 18px",
+                            "cursor": "pointer",
+                        }),
+                    ],
+                )
+            ],
+        ),
+
         
         html.Div(
             f"Playing at {PLAYBACK_FPS} FPS | http://{HOST}:{PORT}",
@@ -389,6 +467,91 @@ def main():
                 style={"color": "red" if data["incidents"] else "green", "fontWeight": "bold"}
             ),
         ])
+
+
+    @app.callback(
+        Output("incident-modal", "style"),
+        Output("incident-modal-text", "children"),
+        Output("alert-active", "data"),
+        Output("playing", "data", allow_duplicate=True),
+        Output("last-alerted-data-id", "data"),
+        Input("data-store", "data"),
+        State("last-alerted-data-id", "data"),
+        State("alert-active", "data"),
+        prevent_initial_call=True,
+    )
+    def maybe_show_incident_modal(data, last_alerted_id, alert_active):
+        if not data:
+            raise PreventUpdate
+
+        data_id = data.get("data_id")
+        incidents = data.get("incidents") or []
+
+        # If no incidents, do nothing (and don't auto-unpause)
+        if not incidents:
+            raise PreventUpdate
+
+        # If we've already alerted for this window, do nothing
+        if last_alerted_id is not None and data_id == last_alerted_id:
+            raise PreventUpdate
+
+        # If modal already active, don't re-trigger
+        if alert_active:
+            raise PreventUpdate
+
+        # Build a short message
+        lines = []
+        for inc in incidents[:5]:  # cap to avoid huge modal
+            itype = inc.get("incident_type", "incident")
+            sev = inc.get("severity")
+            sev_txt = f"{sev:.2f}" if isinstance(sev, (int, float)) else "N/A"
+            vids = inc.get("vehicles", [])
+            lines.append(f"• {itype} | severity {sev_txt} | vehicles: {vids}")
+
+        modal_text = html.Div([
+            html.Div(f"Incidents in this 15s window: {len(incidents)}", style={"marginBottom": "10px"}),
+            html.Pre("\n".join(lines), style={
+                "textAlign": "left",
+                "whiteSpace": "pre-wrap",
+                "backgroundColor": "#f6f6f6",
+                "padding": "10px",
+                "borderRadius": "8px",
+                "maxHeight": "220px",
+                "overflowY": "auto",
+            }),
+            html.Div("Playback is paused until you click OK.", style={"marginTop": "10px", "opacity": 0.8}),
+        ])
+
+        # Show modal + pause
+        modal_style = {
+            "display": "flex",
+            "position": "fixed",
+            "top": 0, "left": 0,
+            "width": "100vw",
+            "height": "100vh",
+            "backgroundColor": "rgba(0,0,0,0.6)",
+            "zIndex": 9999,
+            "alignItems": "center",
+            "justifyContent": "center",
+        }
+
+        return modal_style, modal_text, True, False, data_id
+    
+    @app.callback(
+        Output("incident-modal", "style", allow_duplicate=True),
+        Output("alert-active", "data", allow_duplicate=True),
+        Output("playing", "data", allow_duplicate=True),
+        Input("incident-ok-btn", "n_clicks"),
+        prevent_initial_call=True,
+    )
+    def dismiss_incident_modal(n_clicks):
+        if not n_clicks:
+            raise PreventUpdate
+
+        hidden_style = {"display": "none"}
+        return hidden_style, False, True
+
+
     
     @app.callback(
         Output("time-display", "children"),
@@ -448,9 +611,11 @@ def main():
         Input("current-frame", "data"),
         Input("pitch-slider", "value"),
         Input("bearing-slider", "value"),
+        Input("lat-offset-slider", "value"),
+        Input("lon-offset-slider", "value"),
         State("data-store", "data"),
     )
-    def update_map(frame_idx, pitch, bearing, data):
+    def update_map(frame_idx, pitch, bearing, lat_offset, lon_offset, data):
         """Update map with current frame."""
         if not data or not data.get("frames"):
             return fig
@@ -461,11 +626,21 @@ def main():
         
         frame_vehicles = frames[frame_idx]["vehicles"]
         center = compute_center(data["vehicles"])
+        # center = {"lat": center["lat"] + lat_offset, "lon": center["lon"] + lon_offset}
         
-        new_fig = build_figure(center, frame_vehicles, data["vehicles"], data["incidents"])
+        new_fig = build_figure(center, frame_vehicles, data["vehicles"], data["incidents"], lat_off=lat_offset, lon_off=lon_offset)
         new_fig.update_layout(mapbox=dict(pitch=int(pitch), bearing=int(bearing)))
         
         return new_fig
+    
+    @app.callback(
+    Output("offset-display", "children"),
+    Input("lat-offset-slider", "value"),
+    Input("lon-offset-slider", "value"),
+    )
+    def show_offsets(lat_off, lon_off):
+        return f"Offsets: lat {lat_off:+.6f}, lon {lon_off:+.6f}"
+
     
     print("\n" + "=" * 60)
     print("Live Traffic Feed - Continuous Playback")
