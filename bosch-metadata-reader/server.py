@@ -850,6 +850,9 @@ def get_combined_stats(
 
     # Convert to JSON-safe format (Timestamps -> ISO strings)
     df["timestamp"] = df["timestamp"].dt.strftime("%Y-%m-%dT%H:%M:%S")
+    
+    # Replace NaN and infinity values with None for JSON serialization
+    df = df.replace([float('nan'), float('inf'), float('-inf')], None)
 
     return {
         "count": len(df),
