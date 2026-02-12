@@ -3,7 +3,7 @@
 map_viewer.py
 
 Continuous live feed with 15-second animated playback.
-Waits for first data, then auto-plays forever.
+Starts immediately with empty map, populates when data arrives.
 """
 
 import os
@@ -152,10 +152,6 @@ def compute_center(vehicles, trim=0.1):
     return {"lat": sum(lats2) / len(lats2), "lon": sum(lons2) / len(lons2)}
 
 
-
-
-
-
 def build_figure(center, frame_vehicles, all_vehicles, incidents, lat_off=0.0, lon_off=0.0):
     """Build map showing current frame with trajectory lines."""
     fig = go.Figure()
@@ -212,7 +208,7 @@ def build_figure(center, frame_vehicles, all_vehicles, incidents, lat_off=0.0, l
                 typ = str(v.get("detected_type", "unknown")).lower()
                 color = COLOR_MAP.get(typ, DEFAULT_COLOR)
             
-            lats.append(lat)  # Slight offset for visibility
+            lats.append(lat)
             lons.append(lon)
             colors.append(color)
             texts.append(typ)
@@ -302,26 +298,43 @@ def build_figure(center, frame_vehicles, all_vehicles, incidents, lat_off=0.0, l
 # =========================
 
 def main():
-    # Wait for first data from shared memory
-    print("⏳ Waiting for first data from server...")
-    data = None
-    while data is None:
-        raw_data = get_latest_data()
-        data = process_window_data(raw_data)
-        if data is None:
-            time.sleep(1)
+    # Start immediately with empty data (don't wait)
+    print("🚀 Starting map viewer (waiting for data)...")
     
-    print(f"✅ First data received! {len(data['frames'])} frames from {len(data['vehicles'])} observations")
+    # Initialize with empty data structure
+    data = {
+        "vehicles": [],
+        "incidents": [],
+        "timestamp": "Waiting...",
+        "frames": [],
+        "data_id": None
+    }
     
-    center = compute_center(data["vehicles"])
-    initial_frame = data["frames"][0]["vehicles"] if data["frames"] else []
-    fig = build_figure(center, initial_frame, data["vehicles"], data["incidents"])
+    # Create initial empty figure
+    center = ANCHOR
+    initial_frame = []
+    fig = build_figure(center, initial_frame, [], [])
     
     app = Dash(__name__)
     app.title = "Live Traffic Feed"
     
     app.layout = html.Div([
-        html.H3("🔴 LIVE TRAFFIC FEED (15-20s delay)"),
+        html.Div([
+            html.H3("🔴 LIVE TRAFFIC FEED (15-20s delay)", style={"display": "inline-block", "marginRight": "20px"}),
+            html.A(
+                html.Button("🎥 View Incidents & Videos", style={
+                    "fontSize": "16px",
+                    "padding": "10px 20px",
+                    "backgroundColor": "#dc3545",
+                    "color": "white",
+                    "border": "none",
+                    "borderRadius": "5px",
+                    "cursor": "pointer",
+                }),
+                href="http://127.0.0.1:8051",
+                target="_blank",
+            ),
+        ], style={"marginBottom": "10px"}),
         
         html.Div(id="stats-bar", style={
             "fontSize": "16px",
@@ -355,14 +368,16 @@ def main():
             
             dcc.Slider(
                 id="lat-offset-slider",
-                min=-0.001, max=0.001, step=0.00001, value=0.0, marks = {-0.001: "-0.001", -0.0005: "-0.0005", 0.0: "0", 0.0005: "+0.0005", 0.001: "+0.001"},
+                min=-0.001, max=0.001, step=0.00001, value=0.0, 
+                marks={-0.001: "-0.001", -0.0005: "-0.0005", 0.0: "0", 0.0005: "+0.0005", 0.001: "+0.001"},
                 tooltip={"placement": "bottom", "always_visible": True}
             ),
 
             html.Div("Longitude offset (degrees)", style={"marginTop": "10px"}),
             dcc.Slider(
                 id="lon-offset-slider",
-                min=-0.001, max=0.001, step=0.00001, value=0.0, marks = {-0.001: "-0.001", -0.0005: "-0.0005", 0.0: "0", 0.0005: "+0.0005", 0.001: "+0.001"},
+                min=-0.001, max=0.001, step=0.00001, value=0.0, 
+                marks={-0.001: "-0.001", -0.0005: "-0.0005", 0.0: "0", 0.0005: "+0.0005", 0.001: "+0.001"},
                 tooltip={"placement": "bottom", "always_visible": True}
             ),
 
@@ -376,16 +391,14 @@ def main():
         dcc.Store(id="data-store", data=data),
         dcc.Store(id="current-frame", data=0),
         dcc.Store(id="playing", data=True),
-
-        # Add these stores (near your existing dcc.Store lines)
         dcc.Store(id="alert-active", data=False),
         dcc.Store(id="last-alerted-data-id", data=None),
 
-        # Add this modal overlay near the end of layout (but still inside the main Div children list)
+        # Incident modal
         html.Div(
             id="incident-modal",
             style={
-                "display": "none",              # toggled by callback
+                "display": "none",
                 "position": "fixed",
                 "top": 0, "left": 0,
                 "width": "100vw",
@@ -417,7 +430,6 @@ def main():
                 )
             ],
         ),
-
         
         html.Div(
             f"Playing at {PLAYBACK_FPS} FPS | http://{HOST}:{PORT}",
@@ -453,21 +465,20 @@ def main():
     )
     def update_stats(data):
         """Update stats bar."""
-        if not data:
-            return "Waiting for data..."
+        if not data or not data.get("vehicles"):
+            return "⏳ Waiting for data..."
         
         unique_ids = len(set(v.get("id") for v in data["vehicles"]))
         
         return html.Div([
-            html.Span(f"📅 {data['timestamp']}", style={"marginRight": "20px"}),
+            html.Span(f"📅 {data.get('timestamp', 'Unknown')}", style={"marginRight": "20px"}),
             html.Span(f"🚗 Vehicles: {unique_ids}", style={"marginRight": "20px"}),
-            html.Span(f"🎬 Frames: {len(data['frames'])}", style={"marginRight": "20px"}),
+            html.Span(f"🎬 Frames: {len(data.get('frames', []))}", style={"marginRight": "20px"}),
             html.Span(
-                f"🚨 Incidents: {len(data['incidents'])}",
-                style={"color": "red" if data["incidents"] else "green", "fontWeight": "bold"}
+                f"🚨 Incidents: {len(data.get('incidents', []))}",
+                style={"color": "red" if data.get("incidents") else "green", "fontWeight": "bold"}
             ),
         ])
-
 
     @app.callback(
         Output("incident-modal", "style"),
@@ -487,21 +498,17 @@ def main():
         data_id = data.get("data_id")
         incidents = data.get("incidents") or []
 
-        # If no incidents, do nothing (and don't auto-unpause)
         if not incidents:
             raise PreventUpdate
 
-        # If we've already alerted for this window, do nothing
         if last_alerted_id is not None and data_id == last_alerted_id:
             raise PreventUpdate
 
-        # If modal already active, don't re-trigger
         if alert_active:
             raise PreventUpdate
 
-        # Build a short message
         lines = []
-        for inc in incidents[:5]:  # cap to avoid huge modal
+        for inc in incidents[:5]:
             itype = inc.get("incident_type", "incident")
             sev = inc.get("severity")
             sev_txt = f"{sev:.2f}" if isinstance(sev, (int, float)) else "N/A"
@@ -522,7 +529,6 @@ def main():
             html.Div("Playback is paused until you click OK.", style={"marginTop": "10px", "opacity": 0.8}),
         ])
 
-        # Show modal + pause
         modal_style = {
             "display": "flex",
             "position": "fixed",
@@ -551,8 +557,6 @@ def main():
         hidden_style = {"display": "none"}
         return hidden_style, False, True
 
-
-    
     @app.callback(
         Output("time-display", "children"),
         Input("current-frame", "data"),
@@ -561,7 +565,7 @@ def main():
     def update_time_display(frame_idx, data):
         """Show current frame timestamp."""
         if not data or not data.get("frames"):
-            return "⏱️ Waiting..."
+            return "⏱️ Waiting for data..."
         
         frames = data["frames"]
         if frame_idx >= len(frames):
@@ -618,7 +622,10 @@ def main():
     def update_map(frame_idx, pitch, bearing, lat_offset, lon_offset, data):
         """Update map with current frame."""
         if not data or not data.get("frames"):
-            return fig
+            # Return empty map centered on anchor
+            empty_fig = build_figure(ANCHOR, [], [], [], lat_off=lat_offset, lon_off=lon_offset)
+            empty_fig.update_layout(mapbox=dict(pitch=int(pitch), bearing=int(bearing)))
+            return empty_fig
         
         frames = data["frames"]
         if frame_idx >= len(frames):
@@ -626,7 +633,6 @@ def main():
         
         frame_vehicles = frames[frame_idx]["vehicles"]
         center = compute_center(data["vehicles"])
-        # center = {"lat": center["lat"] + lat_offset, "lon": center["lon"] + lon_offset}
         
         new_fig = build_figure(center, frame_vehicles, data["vehicles"], data["incidents"], lat_off=lat_offset, lon_off=lon_offset)
         new_fig.update_layout(mapbox=dict(pitch=int(pitch), bearing=int(bearing)))
@@ -634,14 +640,13 @@ def main():
         return new_fig
     
     @app.callback(
-    Output("offset-display", "children"),
-    Input("lat-offset-slider", "value"),
-    Input("lon-offset-slider", "value"),
+        Output("offset-display", "children"),
+        Input("lat-offset-slider", "value"),
+        Input("lon-offset-slider", "value"),
     )
     def show_offsets(lat_off, lon_off):
         return f"Offsets: lat {lat_off:+.6f}, lon {lon_off:+.6f}"
 
-    
     print("\n" + "=" * 60)
     print("Live Traffic Feed - Continuous Playback")
     print("=" * 60)
@@ -649,7 +654,7 @@ def main():
     print(f"🎬 Playing at {PLAYBACK_FPS} FPS (real-time)")
     print("=" * 60 + "\n")
     
-    app.run(debug=True, host=HOST, port=PORT)
+    app.run(debug=False, host=HOST, port=PORT, use_reloader=False)
 
 
 if __name__ == "__main__":

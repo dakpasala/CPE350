@@ -4,6 +4,7 @@ client.py
 
 Combined launcher with SHARED MEMORY (no JSON file).
 WebSocket receives data -> stores in memory -> map viewer reads it.
+Also launches incident viewer for browsing accident videos.
 """
 
 import asyncio
@@ -13,8 +14,9 @@ import sys
 from pathlib import Path
 from threading import Lock
 
-# Import map viewer
+# Import viewers
 import map_viewer
+import incident_viewer
 
 # WebSocket imports
 import websockets
@@ -122,6 +124,12 @@ def run_websocket_client():
     loop.run_until_complete(websocket_receiver())
 
 
+def run_incident_viewer():
+    """Run incident viewer in background thread."""
+    print("[START] [Incident Viewer] Starting on http://127.0.0.1:8051...")
+    incident_viewer.main()
+
+
 # =========================
 # Main Launcher
 # =========================
@@ -131,9 +139,10 @@ def main():
     print(" " * 15 + "LIVE TRAFFIC MONITORING CLIENT")
     print("=" * 70)
     print()
-    print("Starting two components:")
-    print("  1. WebSocket Client -> Receives data from backend")
-    print("  2. Map Viewer       -> Displays data with animation")
+    print("Starting THREE components:")
+    print("  1. WebSocket Client    -> Receives data from backend")
+    print("  2. Map Viewer          -> Displays data with animation (http://127.0.0.1:8050)")
+    print("  3. Incident Viewer     -> Browse accident videos (http://127.0.0.1:8051)")
     print()
     print("Using SHARED MEMORY (no JSON file)")
     print("=" * 70)
@@ -148,6 +157,14 @@ def main():
     ws_thread.start()
     
     # Give WebSocket a moment to start
+    time.sleep(1)
+    
+    # Start incident viewer in background thread
+    print("[START] [Incident Viewer] Starting background viewer...")
+    incident_thread = threading.Thread(target=run_incident_viewer, daemon=True)
+    incident_thread.start()
+    
+    # Give incident viewer a moment to start
     time.sleep(2)
     
     # Start map viewer (this blocks - runs Dash server)
