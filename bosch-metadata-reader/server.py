@@ -1,12 +1,14 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Form
+from fastapi.responses import StreamingResponse
 from datetime import datetime, timedelta
-from typing import List, Dict
+from typing import List, Dict, Optional
 
 from collections import defaultdict, deque
 import pandas as pd
 from threading import Thread, Lock
 import json
 import asyncio
+import io
 
 
 # =========================
@@ -28,6 +30,25 @@ from data import (
     load_all_combined_stats,
     delete_combined_stats,
     delete_old_incidents
+)
+
+from video_storage import (
+    save_video_to_gridfs,
+    get_video_by_id,
+    get_recent_videos,
+    get_videos_by_timerange,
+    get_video_for_incident,
+    link_video_to_incident,
+    delete_old_videos
+)
+
+from video_buffer import (
+    add_video_to_buffer,
+    get_video_from_buffer,
+    get_latest_video_from_buffer,
+    remove_video_from_buffer,
+    cleanup_old_videos,
+    get_buffer_stats
 )
 
 
@@ -91,11 +112,15 @@ def health():
                 "window_closes_in": round(WINDOW_SECONDS - elapsed, 1)
             }
     
+    # Get video buffer stats
+    video_buffer_stats = get_buffer_stats()
+    
     return {
         "status": "ok",
         "time": datetime.utcnow().isoformat(),
         "buffer_stats": buffer_stats,
         "window_seconds": WINDOW_SECONDS,
+        "video_buffer": video_buffer_stats
     }
 
 
@@ -118,6 +143,8 @@ def ingest_raw_vehicles(payload: List[Dict]):
 
     now = datetime.utcnow()
     windows_closed = 0
+    
+    print(f"\n[RAW DATA] Received {len(payload)} vehicle records")
 
     # -------------------------
     # Buffer incoming docs
@@ -204,15 +231,20 @@ def process_window_async(location: str, docs: list[Dict]):
     """
     
     if not docs:
+        print(f"[PROCESSING] {location} - No documents to process")
         return
     
-    print(f"[Processing] {location} window | docs={len(docs)}")
+    print(f"[PROCESSING] {location} window | docs={len(docs)}")
+    print(f"[DEBUG] Starting feature extraction...")
     
     try:
         # Feature extraction on full window
         df = process_raw_docs(docs)
+        print(f"[DEBUG] Feature extraction complete | df.shape={df.shape}")
     except Exception as e:
         print(f"[ERROR] Feature extraction failed for {location}: {e}")
+        import traceback
+        traceback.print_exc()
         return
 
     if df.empty:
@@ -229,9 +261,17 @@ def process_window_async(location: str, docs: list[Dict]):
         f"| accel_populated={accel_count}/{len(df)}"
     )
     
+    print(f"[DEBUG] About to run incident detection...")
+    
     # -------------------------
     # RUN INCIDENT DETECTION
     # -------------------------
+    
+    # 🧪 TEST MODE - Always save videos (comment out for production)
+    TEST_MODE_SAVE_ALL_VIDEOS = True  # Set to False in production
+    
+    print(f"[DEBUG] TEST_MODE_SAVE_ALL_VIDEOS = {TEST_MODE_SAVE_ALL_VIDEOS}")
+    
     incidents = []
     try:
         print(f"[DETECTION] Running incident detection for {location}...")
@@ -248,11 +288,71 @@ def process_window_async(location: str, docs: list[Dict]):
             saved_count = save_incidents(incidents)
             print(f"[DB] Saved {saved_count} incidents to DB")
             
+            # 🎥 SAVE VIDEO TO GRIDFS (only if incidents detected!)
+            # Get the latest video for this camera from buffer
+            video_data = get_latest_video_from_buffer(location)
+            
+            if video_data:
+                # Save to GridFS
+                video_id = save_video_to_gridfs(
+                    file_content=video_data["file_content"],
+                    filename=video_data["filename"],
+                    camera=video_data["camera"],
+                    timestamp=video_data["timestamp"].strftime("%Y%m%d_%H%M%S"),
+                    duration=video_data["duration"]
+                )
+                
+                # Link incidents to this video
+                for incident in incidents:
+                    link_video_to_incident(video_id, str(incident["_id"]))
+                
+                print(f"   🎥 Video SAVED to GridFS: {video_id}")
+                
+                # Remove from buffer
+                buffer_key = f"{location}_{video_data['timestamp'].strftime('%Y%m%d_%H%M%S')}"
+                remove_video_from_buffer(buffer_key)
+            else:
+                print(f"   ⚠️ No video found in buffer for this window")
+            
             # Log details
             for incident in incidents:
                 print(f"   - {incident['incident_type']} | severity={incident['severity']:.2f} | vehicles={incident['vehicles']}")
         else:
             print(f"[OK] No incidents detected")
+            
+            print(f"[DEBUG] Checking for video to discard...")
+            
+            # Show what's in the buffer
+            buffer_stats = get_buffer_stats()
+            print(f"[DEBUG] Buffer contains {buffer_stats['count']} video(s)")
+            
+            # 🗑️ GET LATEST VIDEO FROM BUFFER (simpler than exact timestamp matching)
+            video_data = get_latest_video_from_buffer(location)
+            print(f"[DEBUG] get_latest_video_from_buffer returned: {video_data is not None}")
+            
+            if video_data:
+                buffer_key = f"{location}_{video_data['timestamp'].strftime('%Y%m%d_%H%M%S')}"
+                
+                # 🧪 TEST MODE: Save video even without incidents
+                if TEST_MODE_SAVE_ALL_VIDEOS:
+                    print(f"   🧪 TEST MODE: Saving video anyway (no incidents)")
+                    
+                    # Save to GridFS
+                    video_id = save_video_to_gridfs(
+                        file_content=video_data["file_content"],
+                        filename=video_data["filename"],
+                        camera=video_data["camera"],
+                        timestamp=video_data["timestamp"].strftime("%Y%m%d_%H%M%S"),
+                        duration=video_data["duration"]
+                    )
+                    
+                    print(f"   🎥 Video SAVED to GridFS (TEST MODE): {video_id}")
+                
+                # Always remove from buffer
+                remove_video_from_buffer(buffer_key)
+                
+                if not TEST_MODE_SAVE_ALL_VIDEOS:
+                    print(f"   🗑️ Video discarded (no incidents)")
             
     except Exception as e:
         print(f"[ERROR] Incident detection failed: {e}")
@@ -435,6 +535,227 @@ def broadcast_incidents(incidents: List[Dict]):
 
 
 # =========================
+# 🎥 VIDEO ENDPOINTS
+# =========================
+
+@app.post("/videos")
+async def upload_video(
+    file: UploadFile = File(...),
+    camera: str = Form(...),
+    timestamp: str = Form(...),
+    duration: int = Form(...)
+):
+    """
+    Upload a video clip to buffer (not GridFS yet).
+    Video will be saved to GridFS only if incidents are detected in the corresponding time window.
+    
+    Form data:
+    - file: Video file (MP4)
+    - camera: Camera location name
+    - timestamp: Timestamp string (YYYYMMDD_HHMMSS)
+    - duration: Video duration in seconds
+    
+    Returns:
+    - saved: False (buffered, waiting for incident detection)
+    - buffer_key: Unique identifier for buffered video
+    """
+    try:
+        # Read video file content
+        file_content = await file.read()
+        
+        print(f"\n[VIDEO UPLOAD] Received video:")
+        print(f"   Camera: {camera}")
+        print(f"   Timestamp: {timestamp}")
+        print(f"   Size: {len(file_content) / 1024 / 1024:.2f} MB")
+        
+        # Add to buffer (not GridFS yet!)
+        buffer_key = add_video_to_buffer(
+            file_content=file_content,
+            filename=file.filename,
+            camera=camera,
+            timestamp_str=timestamp,
+            duration=duration
+        )
+        
+        # Clean up old buffered videos
+        cleanup_old_videos()
+        
+        # Show current buffer state
+        buffer_stats = get_buffer_stats()
+        print(f"   Buffer now has {buffer_stats['count']} video(s)")
+        
+        return {
+            "status": "buffered",
+            "saved": False,  # ⭐ Not saved yet - waiting for incident detection
+            "buffer_key": buffer_key,
+            "filename": file.filename,
+            "size_mb": len(file_content) / 1024 / 1024,
+            "camera": camera,
+            "timestamp": timestamp,
+            "message": "Video buffered. Will be saved only if incidents detected."
+        }
+    
+    except Exception as e:
+        print(f"⚠️ Video upload failed: {e}")
+        return {
+            "status": "error",
+            "saved": False,
+            "message": str(e)
+        }
+
+
+@app.get("/videos/{video_id}")
+async def stream_video(video_id: str):
+    """
+    Stream video from GridFS by ID.
+    
+    Path params:
+    - video_id: MongoDB ObjectId of the video
+    
+    Returns:
+    - Video stream (MP4)
+    """
+    video_file = get_video_by_id(video_id)
+    
+    if video_file is None:
+        return {
+            "status": "error",
+            "message": f"Video not found: {video_id}"
+        }
+    
+    # Stream video in chunks
+    def iterfile():
+        yield from video_file
+    
+    return StreamingResponse(
+        iterfile(),
+        media_type="video/mp4",
+        headers={
+            "Content-Disposition": f'inline; filename="{video_file.filename}"'
+        }
+    )
+
+
+@app.get("/videos")
+def list_videos(
+    limit: int = 50,
+    camera: Optional[str] = None
+):
+    """
+    List recent videos.
+    
+    Query params:
+    - limit: Max number of videos (default 50)
+    - camera: Filter by camera location
+    
+    Returns:
+    - List of video metadata
+    """
+    videos = get_recent_videos(limit=limit, camera=camera)
+    
+    return {
+        "count": len(videos),
+        "videos": videos
+    }
+
+
+@app.get("/videos/timerange")
+def get_videos_by_time(
+    minutes: int = 15,
+    camera: Optional[str] = None
+):
+    """
+    Get videos from the last N minutes.
+    
+    Query params:
+    - minutes: How many minutes back to query (default 15)
+    - camera: Filter by camera location
+    
+    Returns:
+    - List of video metadata
+    """
+    end_time = datetime.utcnow()
+    start_time = end_time - timedelta(minutes=minutes)
+    
+    videos = get_videos_by_timerange(start_time, end_time, camera)
+    
+    return {
+        "start_time": start_time.isoformat(),
+        "end_time": end_time.isoformat(),
+        "minutes": minutes,
+        "count": len(videos),
+        "videos": videos
+    }
+
+
+@app.get("/videos/incident/{incident_id}")
+def get_video_for_incident_endpoint(incident_id: str):
+    """
+    Get video associated with a specific incident.
+    
+    Path params:
+    - incident_id: Incident ID
+    
+    Returns:
+    - Video metadata or error if not found
+    """
+    from data import get_incident_by_id
+    
+    try:
+        # Get incident details
+        incident = get_incident_by_id(incident_id)
+        if not incident:
+            return {
+                "status": "error",
+                "message": f"Incident not found: {incident_id}"
+            }
+        
+        # Get video for that timestamp/location
+        incident_time = incident.get("timestamp")
+        if isinstance(incident_time, str):
+            incident_time = datetime.fromisoformat(incident_time.replace("Z", "+00:00"))
+        
+        video = get_video_for_incident(incident_time, incident.get("location"))
+        
+        if video:
+            return {
+                "status": "success",
+                "video": video,
+                "incident": incident
+            }
+        else:
+            return {
+                "status": "error",
+                "message": "No video found for this incident"
+            }
+    
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+
+@app.delete("/videos")
+def delete_videos_endpoint(days_old: int = 30):
+    """
+    Delete videos older than N days.
+    
+    Query params:
+    - days_old: Delete videos older than this many days (default 30)
+    
+    Returns:
+    - Number of videos deleted
+    """
+    deleted = delete_old_videos(days_old=days_old)
+    
+    return {
+        "deleted": deleted,
+        "days_old": days_old
+    }
+
+
+# =========================
 # Incident endpoints
 # =========================
 
@@ -577,6 +898,9 @@ def get_combined_stats(
 
     # Convert to JSON-safe format (Timestamps -> ISO strings)
     df["timestamp"] = df["timestamp"].dt.strftime("%Y-%m-%dT%H:%M:%S")
+    
+    # Replace NaN and infinity values with None for JSON serialization
+    df = df.replace([float('nan'), float('inf'), float('-inf')], None)
 
     return {
         "count": len(df),
