@@ -287,6 +287,8 @@ def process_window_async(location: str, docs: list[Dict]):
             # Save incidents to MongoDB
             saved_count = save_incidents(incidents)
             print(f"[DB] Saved {saved_count} incidents to DB")
+
+            send_incident_email(incidents)
             
             # 🎥 SAVE VIDEO TO GRIDFS (only if incidents detected!)
             # Get the latest video for this camera from buffer
