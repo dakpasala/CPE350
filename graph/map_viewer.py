@@ -4,11 +4,13 @@ map_viewer.py
 
 Continuous live feed with 15-second animated playback.
 Starts immediately with empty map, populates when data arrives.
+Enhanced UI with video playback on incident detection.
 """
 
 import os
 import math
 import json
+import requests
 from pathlib import Path
 from dotenv import load_dotenv
 from collections import defaultdict
@@ -37,6 +39,7 @@ if not MAPBOX_TOKEN:
     raise RuntimeError("MAPBOX_ACCESS_TOKEN is missing in .env")
 
 ANCHOR = {"lat": 34.441560, "lon": -119.808362}
+API_BASE_URL = "http://localhost:8000"
 
 MAP_STYLE = "mapbox://styles/mapbox/satellite-streets-v12"
 DEFAULT_ZOOM = 18
@@ -319,71 +322,151 @@ def main():
     app.title = "Live Traffic Feed"
     
     app.layout = html.Div([
+        # Header with gradient
         html.Div([
-            html.H3("🔴 LIVE TRAFFIC FEED (15-20s delay)", style={"display": "inline-block", "marginRight": "20px"}),
+            html.Div([
+                html.H2("🔴 LIVE TRAFFIC MONITORING", style={
+                    "color": "white",
+                    "margin": "0",
+                    "fontSize": "28px",
+                    "fontWeight": "bold",
+                    "textShadow": "2px 2px 4px rgba(0,0,0,0.3)"
+                }),
+                html.P("Real-time incident detection • 15-20s delay", style={
+                    "color": "rgba(255,255,255,0.9)",
+                    "margin": "5px 0 0 0",
+                    "fontSize": "14px"
+                }),
+            ], style={"flex": "1"}),
+            
             html.A(
-                html.Button("🎥 View Incidents & Videos", style={
+                html.Button([
+                    html.Span("🎥 ", style={"fontSize": "20px"}),
+                    "View All Incidents"
+                ], style={
                     "fontSize": "16px",
-                    "padding": "10px 20px",
-                    "backgroundColor": "#dc3545",
+                    "padding": "12px 24px",
+                    "background": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
                     "color": "white",
                     "border": "none",
-                    "borderRadius": "5px",
+                    "borderRadius": "8px",
                     "cursor": "pointer",
+                    "fontWeight": "600",
+                    "boxShadow": "0 4px 15px rgba(0,0,0,0.2)",
+                    "transition": "all 0.3s ease",
                 }),
                 href="http://127.0.0.1:8051",
                 target="_blank",
             ),
-        ], style={"marginBottom": "10px"}),
-        
-        html.Div(id="stats-bar", style={
-            "fontSize": "16px",
-            "marginBottom": "10px",
-            "padding": "10px",
-            "backgroundColor": "#f0f0f0",
-            "borderRadius": "5px"
+        ], style={
+            "display": "flex",
+            "alignItems": "center",
+            "justifyContent": "space-between",
+            "padding": "20px 30px",
+            "background": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+            "borderRadius": "12px",
+            "marginBottom": "20px",
+            "boxShadow": "0 4px 20px rgba(0,0,0,0.1)"
         }),
         
-        dcc.Graph(id="map", figure=fig, style={"height": "700px", "width": "100%"}),
+        # Stats bar
+        html.Div(id="stats-bar", style={
+            "fontSize": "16px",
+            "marginBottom": "15px",
+            "padding": "15px 20px",
+            "background": "white",
+            "borderRadius": "10px",
+            "boxShadow": "0 2px 10px rgba(0,0,0,0.05)",
+            "border": "1px solid #e0e0e0"
+        }),
         
+        # Map
         html.Div([
-            html.Div(id="time-display", style={
-                "fontSize": "18px",
-                "fontWeight": "bold",
-                "marginBottom": "10px"
-            }),
-            
+            dcc.Graph(id="map", figure=fig, style={"height": "100%", "width": "100%"}),
+        ], style={
+            "height": "700px",
+            "borderRadius": "12px",
+            "overflow": "hidden",
+            "boxShadow": "0 4px 20px rgba(0,0,0,0.1)",
+            "marginBottom": "20px"
+        }),
+        
+        # Controls panel
+        html.Div([
             html.Div([
-                html.Button("⏸️ Pause", id="pause-btn", n_clicks=0, style={"marginRight": "10px"}),
-                html.Button("▶️ Resume", id="play-btn", n_clicks=0),
-            ]),
-            
-            html.Div("Camera Pitch", style={"marginTop": "20px"}),
-            dcc.Slider(0, 85, step=10, value=60, id="pitch-slider"),
-            
-            html.Div("Camera Bearing", style={"marginTop": "10px"}),
-            dcc.Slider(0, 360, step=15, value=30, id="bearing-slider"),
-
-            html.Div("Latitude offset (degrees)", style={"marginTop": "20px"}),
-            
-            dcc.Slider(
-                id="lat-offset-slider",
-                min=-0.001, max=0.001, step=0.00001, value=0.0, 
-                marks={-0.001: "-0.001", -0.0005: "-0.0005", 0.0: "0", 0.0005: "+0.0005", 0.001: "+0.001"},
-                tooltip={"placement": "bottom", "always_visible": True}
-            ),
-
-            html.Div("Longitude offset (degrees)", style={"marginTop": "10px"}),
-            dcc.Slider(
-                id="lon-offset-slider",
-                min=-0.001, max=0.001, step=0.00001, value=0.0, 
-                marks={-0.001: "-0.001", -0.0005: "-0.0005", 0.0: "0", 0.0005: "+0.0005", 0.001: "+0.001"},
-                tooltip={"placement": "bottom", "always_visible": True}
-            ),
-
-            html.Div(id="offset-display", style={"marginTop": "10px", "opacity": 0.8}),
-
-        ], style={"marginTop": "20px"}),
+                html.Div(id="time-display", style={
+                    "fontSize": "20px",
+                    "fontWeight": "600",
+                    "marginBottom": "15px",
+                    "color": "#333"
+                }),
+                
+                html.Div([
+                    html.Button("⏸️ Pause", id="pause-btn", n_clicks=0, style={
+                        "marginRight": "10px",
+                        "padding": "10px 20px",
+                        "fontSize": "15px",
+                        "borderRadius": "6px",
+                        "border": "none",
+                        "background": "#f44336",
+                        "color": "white",
+                        "cursor": "pointer",
+                        "fontWeight": "500"
+                    }),
+                    html.Button("▶️ Resume", id="play-btn", n_clicks=0, style={
+                        "padding": "10px 20px",
+                        "fontSize": "15px",
+                        "borderRadius": "6px",
+                        "border": "none",
+                        "background": "#4CAF50",
+                        "color": "white",
+                        "cursor": "pointer",
+                        "fontWeight": "500"
+                    }),
+                ], style={"marginBottom": "25px"}),
+                
+                # Camera controls in grid
+                html.Div([
+                    html.Div([
+                        html.Label("📐 Camera Pitch", style={"fontWeight": "600", "marginBottom": "8px", "display": "block", "color": "#555"}),
+                        dcc.Slider(0, 85, step=10, value=60, id="pitch-slider", marks={0: "0°", 45: "45°", 85: "85°"}),
+                    ], style={"marginBottom": "20px"}),
+                    
+                    html.Div([
+                        html.Label("🧭 Camera Bearing", style={"fontWeight": "600", "marginBottom": "8px", "display": "block", "color": "#555"}),
+                        dcc.Slider(0, 360, step=15, value=30, id="bearing-slider", marks={0: "N", 90: "E", 180: "S", 270: "W"}),
+                    ], style={"marginBottom": "20px"}),
+                    
+                    html.Div([
+                        html.Label("🗺️ Latitude Offset", style={"fontWeight": "600", "marginBottom": "8px", "display": "block", "color": "#555"}),
+                        dcc.Slider(
+                            id="lat-offset-slider",
+                            min=-0.001, max=0.001, step=0.00001, value=0.0,
+                            marks={-0.001: "−", 0.0: "0", 0.001: "+"},
+                            tooltip={"placement": "bottom", "always_visible": True}
+                        ),
+                    ], style={"marginBottom": "20px"}),
+                    
+                    html.Div([
+                        html.Label("🗺️ Longitude Offset", style={"fontWeight": "600", "marginBottom": "8px", "display": "block", "color": "#555"}),
+                        dcc.Slider(
+                            id="lon-offset-slider",
+                            min=-0.001, max=0.001, step=0.00001, value=0.0,
+                            marks={-0.001: "−", 0.0: "0", 0.001: "+"},
+                            tooltip={"placement": "bottom", "always_visible": True}
+                        ),
+                    ], style={"marginBottom": "10px"}),
+                    
+                    html.Div(id="offset-display", style={"fontSize": "13px", "color": "#777"}),
+                ])
+            ])
+        ], style={
+            "padding": "25px",
+            "background": "white",
+            "borderRadius": "12px",
+            "boxShadow": "0 2px 10px rgba(0,0,0,0.05)",
+            "border": "1px solid #e0e0e0"
+        }),
         
         dcc.Interval(id="animation-interval", interval=FRAME_INTERVAL_MS, n_intervals=0),
         dcc.Interval(id="reload-interval", interval=1000, n_intervals=0),
@@ -393,38 +476,76 @@ def main():
         dcc.Store(id="playing", data=True),
         dcc.Store(id="alert-active", data=False),
         dcc.Store(id="last-alerted-data-id", data=None),
+        dcc.Store(id="current-incident-id", data=None),
 
-        # Incident modal
+        # Enhanced Incident modal with video
         html.Div(
             id="incident-modal",
-            style={
-                "display": "none",
-                "position": "fixed",
-                "top": 0, "left": 0,
-                "width": "100vw",
-                "height": "100vh",
-                "backgroundColor": "rgba(0,0,0,0.6)",
-                "zIndex": 9999,
-                "alignItems": "center",
-                "justifyContent": "center",
-            },
+            style={"display": "none"},
             children=[
                 html.Div(
                     style={
                         "backgroundColor": "white",
-                        "padding": "24px",
-                        "borderRadius": "12px",
-                        "width": "480px",
-                        "boxShadow": "0 10px 30px rgba(0,0,0,0.25)",
-                        "textAlign": "center",
+                        "padding": "0px",
+                        "borderRadius": "16px",
+                        "width": "600px",
+                        "maxWidth": "90vw",
+                        "boxShadow": "0 20px 60px rgba(0,0,0,0.3)",
+                        "overflow": "hidden"
                     },
                     children=[
-                        html.H2("🚨 Accident detected", style={"marginTop": 0}),
-                        html.Div(id="incident-modal-text", style={"marginBottom": "18px"}),
-                        html.Button("OK", id="incident-ok-btn", n_clicks=0, style={
-                            "fontSize": "16px",
-                            "padding": "10px 18px",
-                            "cursor": "pointer",
+                        # Header
+                        html.Div([
+                            html.H2([
+                                html.Span("🚨", style={"fontSize": "32px", "marginRight": "10px"}),
+                                "Incident Detected"
+                            ], style={"margin": "0", "color": "white", "fontSize": "24px"}),
+                        ], style={
+                            "padding": "20px 30px",
+                            "background": "linear-gradient(135deg, #f093fb 0%, #f5576c 100%)",
+                        }),
+                        
+                        # Body
+                        html.Div([
+                            html.Div(id="incident-modal-text", style={"marginBottom": "20px"}),
+                            
+                            # Video preview container
+                            html.Div(id="video-preview-container", style={"marginTop": "20px"}),
+                            
+                        ], style={"padding": "30px"}),
+                        
+                        # Footer with buttons
+                        html.Div([
+                            html.Button([
+                                html.Span("🎥 ", style={"fontSize": "18px"}),
+                                "Watch Video"
+                            ], id="watch-video-btn", n_clicks=0, style={
+                                "padding": "12px 24px",
+                                "fontSize": "16px",
+                                "borderRadius": "8px",
+                                "border": "none",
+                                "background": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+                                "color": "white",
+                                "cursor": "pointer",
+                                "fontWeight": "600",
+                                "marginRight": "10px",
+                                "boxShadow": "0 4px 15px rgba(0,0,0,0.2)"
+                            }),
+                            html.Button("Dismiss", id="incident-ok-btn", n_clicks=0, style={
+                                "padding": "12px 24px",
+                                "fontSize": "16px",
+                                "borderRadius": "8px",
+                                "border": "2px solid #ddd",
+                                "background": "white",
+                                "color": "#666",
+                                "cursor": "pointer",
+                                "fontWeight": "600"
+                            }),
+                        ], style={
+                            "padding": "20px 30px",
+                            "borderTop": "1px solid #eee",
+                            "display": "flex",
+                            "justifyContent": "flex-end"
                         }),
                     ],
                 )
@@ -432,10 +553,15 @@ def main():
         ),
         
         html.Div(
-            f"Playing at {PLAYBACK_FPS} FPS | http://{HOST}:{PORT}",
-            style={"marginTop": "10px", "opacity": 0.7}
+            f"🎬 {PLAYBACK_FPS} FPS Playback • http://{HOST}:{PORT}",
+            style={"marginTop": "20px", "textAlign": "center", "color": "#999", "fontSize": "13px"}
         ),
-    ], style={"padding": "20px"})
+    ], style={
+        "padding": "30px",
+        "background": "#f5f7fa",
+        "minHeight": "100vh",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
+    })
     
     @app.callback(
         Output("data-store", "data"),
@@ -466,18 +592,34 @@ def main():
     def update_stats(data):
         """Update stats bar."""
         if not data or not data.get("vehicles"):
-            return "⏳ Waiting for data..."
+            return html.Div("⏳ Waiting for data...", style={"color": "#999"})
         
         unique_ids = len(set(v.get("id") for v in data["vehicles"]))
+        incident_count = len(data.get("incidents", []))
         
         return html.Div([
-            html.Span(f"📅 {data.get('timestamp', 'Unknown')}", style={"marginRight": "20px"}),
-            html.Span(f"🚗 Vehicles: {unique_ids}", style={"marginRight": "20px"}),
-            html.Span(f"🎬 Frames: {len(data.get('frames', []))}", style={"marginRight": "20px"}),
-            html.Span(
-                f"🚨 Incidents: {len(data.get('incidents', []))}",
-                style={"color": "red" if data.get("incidents") else "green", "fontWeight": "bold"}
-            ),
+            html.Span([
+                html.Span("📅 ", style={"fontSize": "18px"}),
+                data.get('timestamp', 'Unknown')
+            ], style={"marginRight": "30px", "fontWeight": "500"}),
+            html.Span([
+                html.Span("🚗 ", style={"fontSize": "18px"}),
+                f"{unique_ids} Vehicles"
+            ], style={"marginRight": "30px", "fontWeight": "500"}),
+            html.Span([
+                html.Span("🎬 ", style={"fontSize": "18px"}),
+                f"{len(data.get('frames', []))} Frames"
+            ], style={"marginRight": "30px", "fontWeight": "500"}),
+            html.Span([
+                html.Span("🚨 ", style={"fontSize": "18px"}),
+                f"{incident_count} Incidents"
+            ], style={
+                "fontWeight": "bold",
+                "color": "#f5576c" if incident_count > 0 else "#4CAF50",
+                "padding": "6px 12px",
+                "borderRadius": "6px",
+                "background": "rgba(245, 87, 108, 0.1)" if incident_count > 0 else "rgba(76, 175, 80, 0.1)"
+            }),
         ])
 
     @app.callback(
@@ -486,6 +628,7 @@ def main():
         Output("alert-active", "data"),
         Output("playing", "data", allow_duplicate=True),
         Output("last-alerted-data-id", "data"),
+        Output("current-incident-id", "data"),
         Input("data-store", "data"),
         State("last-alerted-data-id", "data"),
         State("alert-active", "data"),
@@ -507,26 +650,30 @@ def main():
         if alert_active:
             raise PreventUpdate
 
+        # Build incident details
         lines = []
-        for inc in incidents[:5]:
-            itype = inc.get("incident_type", "incident")
+        for i, inc in enumerate(incidents[:5], 1):
+            itype = inc.get("incident_type", "incident").upper()
             sev = inc.get("severity")
             sev_txt = f"{sev:.2f}" if isinstance(sev, (int, float)) else "N/A"
             vids = inc.get("vehicles", [])
-            lines.append(f"• {itype} | severity {sev_txt} | vehicles: {vids}")
+            lines.append(
+                html.Div([
+                    html.Span(f"#{i} ", style={"fontWeight": "bold", "color": "#667eea"}),
+                    html.Span(f"{itype}", style={"fontWeight": "600", "marginRight": "10px"}),
+                    html.Span(f"Severity: {sev_txt}", style={"color": "#f5576c", "fontWeight": "600", "marginRight": "10px"}),
+                    html.Span(f"Vehicles: {len(vids)}", style={"color": "#666"}),
+                ], style={"marginBottom": "8px", "padding": "10px", "background": "#f8f9fa", "borderRadius": "6px"})
+            )
 
         modal_text = html.Div([
-            html.Div(f"Incidents in this 15s window: {len(incidents)}", style={"marginBottom": "10px"}),
-            html.Pre("\n".join(lines), style={
-                "textAlign": "left",
-                "whiteSpace": "pre-wrap",
-                "backgroundColor": "#f6f6f6",
-                "padding": "10px",
-                "borderRadius": "8px",
-                "maxHeight": "220px",
-                "overflowY": "auto",
+            html.Div(f"⚠️ {len(incidents)} incident(s) detected in this 15-second window", style={
+                "marginBottom": "15px",
+                "fontSize": "16px",
+                "fontWeight": "600",
+                "color": "#333"
             }),
-            html.Div("Playback is paused until you click OK.", style={"marginTop": "10px", "opacity": 0.8}),
+            html.Div(lines),
         ])
 
         modal_style = {
@@ -535,18 +682,64 @@ def main():
             "top": 0, "left": 0,
             "width": "100vw",
             "height": "100vh",
-            "backgroundColor": "rgba(0,0,0,0.6)",
+            "backgroundColor": "rgba(0,0,0,0.7)",
             "zIndex": 9999,
             "alignItems": "center",
             "justifyContent": "center",
+            "backdropFilter": "blur(4px)"
         }
 
-        return modal_style, modal_text, True, False, data_id
+        # Store first incident ID for video lookup
+        first_incident_id = str(incidents[0].get("_id")) if incidents else None
+
+        return modal_style, modal_text, True, False, data_id, first_incident_id
+    
+    @app.callback(
+        Output("video-preview-container", "children"),
+        Input("watch-video-btn", "n_clicks"),
+        State("current-incident-id", "data"),
+        prevent_initial_call=True,
+    )
+    def show_video_preview(n_clicks, incident_id):
+        if not n_clicks or not incident_id:
+            raise PreventUpdate
+        
+        # Fetch video for this incident
+        try:
+            response = requests.get(f"{API_BASE_URL}/videos/incident/{incident_id}", timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("status") == "success":
+                    video_info = data.get("video")
+                    video_id = video_info.get("_id")
+                    
+                    return html.Div([
+                        html.Hr(style={"margin": "20px 0"}),
+                        html.H4("📹 Incident Video", style={"marginBottom": "15px"}),
+                        html.Video(
+                            src=f"{API_BASE_URL}/videos/{video_id}",
+                            controls=True,
+                            autoPlay=True,
+                            style={
+                                "width": "100%",
+                                "borderRadius": "8px",
+                                "boxShadow": "0 4px 15px rgba(0,0,0,0.2)"
+                            }
+                        ),
+                    ])
+                else:
+                    return html.Div("⚠️ No video available for this incident", style={"color": "#f5576c", "marginTop": "15px"})
+            else:
+                return html.Div("⚠️ Could not load video", style={"color": "#f5576c", "marginTop": "15px"})
+        except Exception as e:
+            return html.Div(f"⚠️ Error loading video: {str(e)}", style={"color": "#f5576c", "marginTop": "15px"})
     
     @app.callback(
         Output("incident-modal", "style", allow_duplicate=True),
         Output("alert-active", "data", allow_duplicate=True),
         Output("playing", "data", allow_duplicate=True),
+        Output("video-preview-container", "children", allow_duplicate=True),
         Input("incident-ok-btn", "n_clicks"),
         prevent_initial_call=True,
     )
@@ -555,7 +748,7 @@ def main():
             raise PreventUpdate
 
         hidden_style = {"display": "none"}
-        return hidden_style, False, True
+        return hidden_style, False, True, ""
 
     @app.callback(
         Output("time-display", "children"),
@@ -575,7 +768,7 @@ def main():
         ts_display = frame.get("timestamp_display", "")
         num_vehicles = len(frame.get("vehicles", []))
         
-        return f"⏱️ {ts_display} | Frame {frame_idx + 1}/{len(frames)} | {num_vehicles} vehicles"
+        return f"⏱️ {ts_display} • Frame {frame_idx + 1}/{len(frames)} • {num_vehicles} vehicles"
     
     @app.callback(
         Output("current-frame", "data", allow_duplicate=True),
@@ -645,10 +838,10 @@ def main():
         Input("lon-offset-slider", "value"),
     )
     def show_offsets(lat_off, lon_off):
-        return f"Offsets: lat {lat_off:+.6f}, lon {lon_off:+.6f}"
+        return f"Current offsets: lat {lat_off:+.6f}°, lon {lon_off:+.6f}°"
 
     print("\n" + "=" * 60)
-    print("Live Traffic Feed - Continuous Playback")
+    print("Live Traffic Feed - Enhanced UI")
     print("=" * 60)
     print(f"📍 Open: http://{HOST}:{PORT}")
     print(f"🎬 Playing at {PLAYBACK_FPS} FPS (real-time)")
