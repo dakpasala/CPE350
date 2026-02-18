@@ -287,8 +287,6 @@ def process_window_async(location: str, docs: list[Dict]):
             # Save incidents to MongoDB
             saved_count = save_incidents(incidents)
             print(f"[DB] Saved {saved_count} incidents to DB")
-
-            send_incident_email(incidents)
             
             # 🎥 SAVE VIDEO TO GRIDFS (only if incidents detected!)
             # Get the latest video for this camera from buffer
@@ -315,7 +313,7 @@ def process_window_async(location: str, docs: list[Dict]):
                 remove_video_from_buffer(buffer_key)
             else:
                 print(f"   ⚠️ No video found in buffer for this window")
-            
+        
             # Log details
             for incident in incidents:
                 print(f"   - {incident['incident_type']} | severity={incident['severity']:.2f} | vehicles={incident['vehicles']}")
@@ -606,38 +604,6 @@ async def upload_video(
         }
 
 
-@app.get("/videos/{video_id}")
-async def stream_video(video_id: str):
-    """
-    Stream video from GridFS by ID.
-    
-    Path params:
-    - video_id: MongoDB ObjectId of the video
-    
-    Returns:
-    - Video stream (MP4)
-    """
-    video_file = get_video_by_id(video_id)
-    
-    if video_file is None:
-        return {
-            "status": "error",
-            "message": f"Video not found: {video_id}"
-        }
-    
-    # Stream video in chunks
-    def iterfile():
-        yield from video_file
-    
-    return StreamingResponse(
-        iterfile(),
-        media_type="video/mp4",
-        headers={
-            "Content-Disposition": f'inline; filename="{video_file.filename}"'
-        }
-    )
-
-
 @app.get("/videos")
 def list_videos(
     limit: int = 50,
@@ -736,6 +702,38 @@ def get_video_for_incident_endpoint(incident_id: str):
             "status": "error",
             "message": str(e)
         }
+
+
+@app.get("/videos/{video_id}")
+async def stream_video(video_id: str):
+    """
+    Stream video from GridFS by ID.
+    
+    Path params:
+    - video_id: MongoDB ObjectId of the video
+    
+    Returns:
+    - Video stream (MP4)
+    """
+    video_file = get_video_by_id(video_id)
+    
+    if video_file is None:
+        return {
+            "status": "error",
+            "message": f"Video not found: {video_id}"
+        }
+    
+    # Stream video in chunks
+    def iterfile():
+        yield from video_file
+    
+    return StreamingResponse(
+        iterfile(),
+        media_type="video/mp4",
+        headers={
+            "Content-Disposition": f'inline; filename="{video_file.filename}"'
+        }
+    )
 
 
 @app.delete("/videos")
