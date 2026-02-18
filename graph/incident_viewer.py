@@ -101,6 +101,26 @@ def get_recent_incidents(limit=50, location=None):
         return []
 
 
+def get_incidents_by_timerange(minutes, location=None):
+    """Fetch incidents from last N minutes."""
+    try:
+        params = {"minutes": minutes}
+        if location:
+            params["location"] = location
+        
+        response = requests.get(f"{API_BASE_URL}/incidents/timerange", params=params, timeout=10)
+        
+        if response.status_code == 200:
+            data = response.json()
+            return data.get("incidents", [])
+        else:
+            print(f"⚠️ Failed to fetch incidents: {response.status_code}")
+            return []
+    except Exception as e:
+        print(f"⚠️ Error fetching incidents: {e}")
+        return []
+
+
 def get_video_for_incident(incident_id):
     """Fetch video associated with an incident."""
     try:
@@ -216,17 +236,38 @@ app.layout = dbc.Container([
     
     # Tabs for different views
     dbc.Tabs([
-        # Tab 1: Recent Incidents
+        # Tab 1: Incidents by Time Range with Videos
         dbc.Tab([
             html.Div([
-                html.H3("Recent Incidents with Videos", className="mt-4"),
-                html.P("Browse incidents and watch associated videos"),
+                html.H3("Incidents by Time Range", className="mt-4"),
+                html.P("Browse incidents from a specific time period and watch videos"),
                 
-                dbc.Button("🔄 Refresh", id="refresh-incidents-btn", color="primary", className="mb-3"),
+                dbc.Row([
+                    dbc.Col([
+                        dbc.Label("Time Range:"),
+                        dbc.Select(
+                            id="incident-timerange-select",
+                            options=[{"label": k, "value": v} for k, v in TIME_RANGES.items()],
+                            value=1440,  # Default: Last Day
+                        ),
+                    ], width=4),
+                    dbc.Col([
+                        dbc.Label("Location:"),
+                        dbc.Input(
+                            id="incident-location-input",
+                            placeholder="e.g., patterson (optional)",
+                            type="text"
+                        ),
+                    ], width=4),
+                    dbc.Col([
+                        html.Br(),
+                        dbc.Button("🔍 Search Incidents", id="search-incidents-btn", color="danger"),
+                    ], width=4),
+                ], className="mb-4"),
                 
                 html.Div(id="incidents-container"),
             ])
-        ], label="🚨 Recent Incidents"),
+        ], label="🚨 Incidents by Time"),
         
         # Tab 2: Browse All Videos
         dbc.Tab([
@@ -252,7 +293,7 @@ app.layout = dbc.Container([
                     ], width=4),
                     dbc.Col([
                         html.Br(),
-                        dbc.Button("🔍 Search", id="search-videos-btn", color="primary"),
+                        dbc.Button("🔍 Search Videos", id="search-videos-btn", color="primary"),
                     ], width=4),
                 ], className="mb-4"),
                 
@@ -293,20 +334,23 @@ app.layout = dbc.Container([
 
 @app.callback(
     Output("incidents-container", "children"),
-    Input("refresh-incidents-btn", "n_clicks"),
+    Input("search-incidents-btn", "n_clicks"),
+    State("incident-timerange-select", "value"),
+    State("incident-location-input", "value"),
     prevent_initial_call=False,
 )
-def load_recent_incidents(n_clicks):
-    """Load and display recent incidents."""
-    incidents = get_recent_incidents(limit=20)
+def search_incidents(n_clicks, minutes, location):
+    """Search and display incidents by time range."""
+    location = location.strip() if location else None
+    incidents = get_incidents_by_timerange(minutes, location)
     
     if not incidents:
-        return dbc.Alert("No incidents found", color="info")
+        return dbc.Alert("No incidents found for this time range", color="info")
     
     cards = [build_incident_card(inc) for inc in incidents]
     
     return html.Div([
-        html.P(f"Found {len(incidents)} incidents"),
+        html.P(f"Found {len(incidents)} incidents in the last {minutes} minutes", style={"fontSize": "18px", "fontWeight": "bold"}),
         dbc.Row([dbc.Col(card, width=4) for card in cards]),
     ])
 
