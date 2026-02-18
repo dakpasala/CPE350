@@ -48,8 +48,8 @@ HOST = os.getenv("HOST", "127.0.0.1")
 PORT = int(os.getenv("PORT", "8050"))
 
 # Play through 15 seconds in ~15 seconds (1x speed)
-PLAYBACK_FPS = 10
-FRAME_INTERVAL_MS = int(1000 / PLAYBACK_FPS)
+PLAYBACK_FPS = 3  # Match actual data rate
+FRAME_INTERVAL_MS = int(1000 / 3)  # ~333ms per frame
 
 COLOR_MAP = {
     "car": "rgb(255,0,0)",
