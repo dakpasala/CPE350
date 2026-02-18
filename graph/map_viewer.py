@@ -784,7 +784,12 @@ def main():
             return dash.no_update
         
         frames = data["frames"]
-        next_frame = (current_frame + 1) % len(frames)
+        
+        # Don't loop - stop at last frame
+        if current_frame >= len(frames) - 1:
+            return dash.no_update  # Stay on last frame
+        
+        next_frame = current_frame + 1
         
         return next_frame
     
