@@ -18,20 +18,18 @@ import os
 from pathlib import Path
 from threading import Lock
 
+# Add visualization directory to path for heatmap_viewer
+sys.path.insert(0, str(Path(__file__).parent.parent / 'visualization'))
+
 # Import viewers
 import map_viewer
 import incident_viewer
-
+import heatmap_viewer
 
 # WebSocket imports
 import websockets
 import json
 from datetime import datetime
-
-sys.path.insert(1, '../visualization')
-
-# Now you can import the file as a module
-import heatmap_viewer
 
 
 # =========================
@@ -152,14 +150,14 @@ def run_heatmap_viewer():
 
 def main():
     print("=" * 70)
-    print(" " * 12 + "LIVE TRAFFIC MONITORING CLIENT v2.0")
+    print(" " * 15 + "LIVE TRAFFIC MONITORING CLIENT")
     print("=" * 70)
     print()
     print("Starting FOUR components:")
     print("  1. WebSocket Client    -> Receives data from backend")
-    print("  2. Map Viewer          -> Animated tracking (http://127.0.0.1:8050)")
-    print("  3. Incident Viewer     -> Browse videos (http://127.0.0.1:8051)")
-    print("  4. Heatmap Viewer      -> Traffic density (http://YOUR_IP:8052) 🔥")
+    print("  2. Map Viewer          -> http://127.0.0.1:8050 ✅")
+    print("  3. Incident Viewer     -> http://127.0.0.1:8051 ✅")
+    print("  4. Heatmap Viewer      -> http://YOUR_IP:8052 🔥")
     print()
     print("Using SHARED MEMORY (no JSON file)")
     print("=" * 70)
@@ -214,7 +212,7 @@ def main():
     print()
     
     # Start map viewer (this blocks - runs Dash server)
-    print("[START] [Map] Starting interactive map viewer...")
+    print("[START] [Map Viewer] Starting interactive map viewer...")
     print()
     
     try:
