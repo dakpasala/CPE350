@@ -9,3 +9,6 @@ graph/output3.json
 visualization/connection.ini
 .venv
 HoldingFiles
+
+graph/__pycache__
+visualization/__pycache__

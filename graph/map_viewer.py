@@ -358,6 +358,25 @@ def main():
                 href="http://127.0.0.1:8051",
                 target="_blank",
             ),
+            html.A(
+                html.Button([
+                    html.Span("🔥 ", style={"fontSize": "20px"}),
+                    "Traffic Heatmap"
+                ], style={
+                    "fontSize": "16px",
+                    "padding": "12px 24px",
+                    "background": "linear-gradient(135deg, #f093fb 0%, #f5576c 100%)",
+                    "color": "white",
+                    "border": "none",
+                    "borderRadius": "8px",
+                    "cursor": "pointer",
+                    "fontWeight": "600",
+                    "boxShadow": "0 4px 15px rgba(0,0,0,0.2)",
+                    "transition": "all 0.3s ease",
+                }),
+                href="http://127.0.0.1:8052",
+                target="_blank",
+            ),
         ], style={
             "display": "flex",
             "alignItems": "center",
