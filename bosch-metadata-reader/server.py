@@ -668,40 +668,23 @@ def get_video_for_incident_endpoint(incident_id: str):
     - Video metadata or error if not found
     """
     from data import get_incident_by_id
+    from video_storage import get_videos_collection
+    from bson import ObjectId
     
     try:
-        # Get incident details
-        incident = get_incident_by_id(incident_id)
-        if not incident:
-            return {
-                "status": "error",
-                "message": f"Incident not found: {incident_id}"
-            }
-        
-        # Get video for that timestamp/location
-        incident_time = incident.get("timestamp")
-        if isinstance(incident_time, str):
-            incident_time = datetime.fromisoformat(incident_time.replace("Z", "+00:00"))
-        
-        video = get_video_for_incident(incident_time, incident.get("location"))
+        # Get video that has this incident linked
+        videos_coll = get_videos_collection()
+        video = videos_coll.find_one({"incident_ids": incident_id})
         
         if video:
-            return {
-                "status": "success",
-                "video": video,
-                "incident": incident
-            }
+            # Convert ObjectId to string for JSON
+            video["_id"] = str(video["_id"])
+            return {"status": "success", "video": video}
         else:
-            return {
-                "status": "error",
-                "message": "No video found for this incident"
-            }
+            return {"status": "error", "message": "No video found for this incident"}
     
     except Exception as e:
-        return {
-            "status": "error",
-            "message": str(e)
-        }
+        return {"status": "error", "message": str(e)}
 
 
 @app.get("/videos/{video_id}")
