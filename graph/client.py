@@ -3,14 +3,18 @@
 client.py
 
 Combined launcher with SHARED MEMORY (no JSON file).
-WebSocket receives data -> stores in memory -> map viewer reads it.
-Also launches incident viewer for browsing accident videos.
+WebSocket receives data -> stores in memory -> viewers read it.
+Now includes THREE viewers:
+1. Map viewer - animated vehicle tracking
+2. Incident viewer - browse accident videos  
+3. Heatmap viewer - traffic density visualization
 """
 
 import asyncio
 import threading
 import time
 import sys
+import os
 from pathlib import Path
 from threading import Lock
 
@@ -18,10 +22,16 @@ from threading import Lock
 import map_viewer
 import incident_viewer
 
+
 # WebSocket imports
 import websockets
 import json
 from datetime import datetime
+
+sys.path.insert(1, '../visualization')
+
+# Now you can import the file as a module
+import heatmap_viewer
 
 
 # =========================
@@ -40,7 +50,7 @@ SHARED_DATA_LOCK = Lock()
 
 
 def get_latest_data():
-    """Get latest data from shared memory (called by map viewer)."""
+    """Get latest data from shared memory (called by all viewers)."""
     with SHARED_DATA_LOCK:
         return SHARED_DATA
 
@@ -130,26 +140,35 @@ def run_incident_viewer():
     incident_viewer.main()
 
 
+def run_heatmap_viewer():
+    """Run heatmap viewer in background thread."""
+    print("[START] [Heatmap Viewer] Starting on http://0.0.0.0:8052...")
+    heatmap_viewer.main()
+
+
 # =========================
 # Main Launcher
 # =========================
 
 def main():
     print("=" * 70)
-    print(" " * 15 + "LIVE TRAFFIC MONITORING CLIENT")
+    print(" " * 12 + "LIVE TRAFFIC MONITORING CLIENT v2.0")
     print("=" * 70)
     print()
-    print("Starting THREE components:")
+    print("Starting FOUR components:")
     print("  1. WebSocket Client    -> Receives data from backend")
-    print("  2. Map Viewer          -> Displays data with animation (http://127.0.0.1:8050)")
-    print("  3. Incident Viewer     -> Browse accident videos (http://127.0.0.1:8051)")
+    print("  2. Map Viewer          -> Animated tracking (http://127.0.0.1:8050)")
+    print("  3. Incident Viewer     -> Browse videos (http://127.0.0.1:8051)")
+    print("  4. Heatmap Viewer      -> Traffic density (http://YOUR_IP:8052) 🔥")
     print()
     print("Using SHARED MEMORY (no JSON file)")
     print("=" * 70)
     print()
     
-    # Inject the get_latest_data function into map_viewer module
+    # Inject the get_latest_data function into all viewer modules
     map_viewer.get_latest_data = get_latest_data
+    incident_viewer.get_latest_data = get_latest_data
+    heatmap_viewer.get_latest_data = get_latest_data
     
     # Start WebSocket client in background thread
     print("[START] [WebSocket] Starting background receiver...")
@@ -166,6 +185,33 @@ def main():
     
     # Give incident viewer a moment to start
     time.sleep(2)
+    
+    # Start heatmap viewer in background thread
+    print("[START] [Heatmap Viewer] Starting background heatmap...")
+    heatmap_thread = threading.Thread(target=run_heatmap_viewer, daemon=True)
+    heatmap_thread.start()
+    
+    # Give heatmap viewer a moment to start
+    time.sleep(2)
+    
+    # Display network information
+    print("\n" + "=" * 70)
+    print("🌐 ACCESS URLS:")
+    print("=" * 70)
+    try:
+        import socket
+        hostname = socket.gethostname()
+        local_ip = socket.gethostbyname(hostname)
+        print(f"  Map Viewer:      http://127.0.0.1:8050")
+        print(f"  Incident Viewer: http://127.0.0.1:8051")
+        print(f"  Heatmap Viewer:  http://{local_ip}:8052  <- ACCESS FROM ANY DEVICE")
+        print(f"                   http://127.0.0.1:8052  <- LOCAL ACCESS")
+    except:
+        print(f"  Map Viewer:      http://127.0.0.1:8050")
+        print(f"  Incident Viewer: http://127.0.0.1:8051")
+        print(f"  Heatmap Viewer:  http://127.0.0.1:8052")
+    print("=" * 70)
+    print()
     
     # Start map viewer (this blocks - runs Dash server)
     print("[START] [Map] Starting interactive map viewer...")
