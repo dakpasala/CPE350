@@ -322,8 +322,8 @@ def generate_empty_map():
             const map = new mapboxgl.Map({{
                 container: 'map',
                 style: 'mapbox://styles/mapbox/dark-v11',
-                center: [-122.4194, 37.7749],
-                zoom: 12,
+                center: [-119.808362, 34.441560],
+                zoom: 15,
                 pitch: 45,
                 bearing: 0
             }});
@@ -371,7 +371,7 @@ def generate_heatmap_html(heatmap_points, incidents, current_vehicles):
         center_lat = np.mean([p['lat'] for p in heatmap_points])
         center_lon = np.mean([p['lon'] for p in heatmap_points])
     else:
-        center_lat, center_lon = 37.7749, -122.4194
+        center_lat, center_lon = 34.441560, -119.808362
     
     return f"""
     <!DOCTYPE html>
@@ -402,19 +402,19 @@ def generate_heatmap_html(heatmap_points, incidents, current_vehicles):
                 background: rgba(10, 14, 39, 0.95);
                 color: #00ff88;
                 padding: 15px 20px;
-                border-radius: 8px;
-                font-size: 12px;
+                borderRadius: 8px;
+                fontSize: 12px;
                 border: 2px solid #00ff88;
-                box-shadow: 0 0 20px rgba(0, 255, 136, 0.3);
-                z-index: 1000;
-                backdrop-filter: blur(10px);
+                boxShadow: 0 0 20px rgba(0, 255, 136, 0.3);
+                zIndex: 1000;
+                backdropFilter: blur(10px);
             }}
             #info h4 {{
                 margin: 0 0 10px 0;
                 color: #00ff88;
-                text-transform: uppercase;
-                letter-spacing: 2px;
-                font-size: 14px;
+                textTransform: uppercase;
+                letterSpacing: 2px;
+                fontSize: 14px;
             }}
             #info p {{
                 margin: 5px 0;
@@ -447,7 +447,7 @@ def generate_heatmap_html(heatmap_points, incidents, current_vehicles):
                 container: 'map',
                 style: 'mapbox://styles/mapbox/dark-v11',
                 center: [{center_lon}, {center_lat}],
-                zoom: 14,
+                zoom: 16,
                 pitch: 45,
                 bearing: 0,
                 antialias: true
