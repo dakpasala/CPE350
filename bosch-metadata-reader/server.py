@@ -20,6 +20,8 @@ from combined_statistics import ( process_raw_docs, save_stats )
 from incident_detection.engine import detect_incidents
 from incident_detection.models import load_latest_models
 from incident_detection.data import scale_per_location
+from incident_detection.auto_retrain import check_and_train_for_location  
+
 from email_alert import send_incident_email
 
 from data import (
@@ -253,6 +255,9 @@ def process_window_async(location: str, docs: list[Dict]):
 
     # Save to DB for historical analysis
     save_stats(df)
+    
+    # 🧠 AUTO-TRAIN MODEL IF NEEDED (NEW!)
+    check_and_train_for_location(location)
 
     accel_count = df["accel"].notna().sum() if "accel" in df.columns else 0
     print(
@@ -356,6 +361,8 @@ def process_window_async(location: str, docs: list[Dict]):
             
     except Exception as e:
         print(f"[ERROR] Incident detection failed: {e}")
+        import traceback
+        traceback.print_exc()
     
     # -------------------------
     # SEND ENRICHED DATA TO FRONTEND

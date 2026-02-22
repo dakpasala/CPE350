@@ -12,3 +12,5 @@ HoldingFiles
 
 graph/__pycache__
 visualization/__pycache__
+bosch-metadata-reader/incident_detection/__pycache__
+bosch-metadata-reader/__pycache__
