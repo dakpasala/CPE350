@@ -24,7 +24,11 @@ from data import load_all_combined_stats  # ← Import from root data.py
 # Config
 # =========================
 
-MODELS_DIR = "../models"  # Go up one level from incident_detection/ to models/
+# Get absolute path to models directory
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PARENT_DIR = os.path.dirname(SCRIPT_DIR)
+MODELS_DIR = os.path.join(PARENT_DIR, "models")
+
 RETRAIN_THRESHOLD = 1000  # Minimum samples needed to train
 MIN_RETRAIN_INTERVAL_HOURS = 6  # Don't retrain more often than this
 
