@@ -2,7 +2,7 @@
 """
 dashboard.py
 
-Multi-camera security room dashboard.
+Multi-camera camera room dashboard.
 Shows live previews of all active camera feeds in a grid layout.
 """
 
@@ -197,10 +197,10 @@ def build_preview_map(vehicles, incidents, location):
 # =========================
 
 def main():
-    print("Starting security dashboard...")
+    print("Starting camera dashboard...")
     
     app = Dash(__name__)
-    app.title = "Security Dashboard"
+    app.title = "Camera Dashboard"
     
     app.layout = html.Div([
         # Header
@@ -212,7 +212,7 @@ def main():
                 "fontWeight": "bold",
                 "textShadow": "2px 2px 4px rgba(0,0,0,0.3)"
             }),
-            html.P("Multi-Camera Security Dashboard", style={
+            html.P("Multi-Camera Camera Dashboard", style={
                 "color": "rgba(255,255,255,0.9)",
                 "margin": "10px 0 0 0",
                 "fontSize": "16px"
@@ -229,7 +229,7 @@ def main():
         # Camera Grid
         html.Div(id="camera-grid", style={
             "display": "grid",
-            "gridTemplateColumns": "repeat(auto-fit, minmax(400px, 1fr))",
+            "gridTemplateColumns": "repeat(4, 1fr)",  # 4 columns
             "gap": "20px",
             "marginBottom": "30px"
         }),
@@ -241,7 +241,7 @@ def main():
         dcc.Store(id="cameras-store", data={}),
         
         html.Div(
-            f"Security Dashboard • http://{HOST}:{PORT}",
+            f"Camera Dashboard • http://{HOST}:{PORT}",
             style={"textAlign": "center", "color": "#999", "fontSize": "13px", "marginTop": "20px"}
         ),
     ], style={
@@ -314,25 +314,25 @@ def main():
             # Build preview map
             preview_fig = build_preview_map(vehicles, incidents, location)
             
-            # Create camera card
-            card = html.Div([
+            # Create camera card (entire card is clickable)
+            card = html.A([
                 # Camera name header
                 html.Div([
                     html.H3(location.upper(), style={
                         "margin": "0",
-                        "fontSize": "20px",
+                        "fontSize": "18px",
                         "fontWeight": "600",
                         "color": "#333"
                     }),
                     html.Div([
                         html.Span("●", style={
                             "color": status_color,
-                            "fontSize": "12px",
+                            "fontSize": "10px",
                             "marginRight": "5px"
                         }),
                         html.Span(status_text, style={
                             "color": status_color,
-                            "fontSize": "12px",
+                            "fontSize": "11px",
                             "fontWeight": "600"
                         }),
                     ], style={"display": "flex", "alignItems": "center"}),
@@ -340,8 +340,8 @@ def main():
                     "display": "flex",
                     "justifyContent": "space-between",
                     "alignItems": "center",
-                    "marginBottom": "15px",
-                    "paddingBottom": "15px",
+                    "marginBottom": "12px",
+                    "paddingBottom": "12px",
                     "borderBottom": "2px solid #eee"
                 }),
                 
@@ -350,12 +350,12 @@ def main():
                     dcc.Graph(
                         figure=preview_fig,
                         config={'displayModeBar': False},
-                        style={"height": "250px", "width": "100%"}
+                        style={"height": "180px", "width": "100%"}  # Smaller height
                     ),
                 ], style={
                     "borderRadius": "8px",
                     "overflow": "hidden",
-                    "marginBottom": "15px",
+                    "marginBottom": "12px",
                     "background": "#f8f9fa"
                 }),
                 
@@ -363,61 +363,49 @@ def main():
                 html.Div([
                     html.Div([
                         html.Span(str(unique_vehicles), style={
-                            "fontSize": "24px",
+                            "fontSize": "20px",
                             "fontWeight": "bold",
                             "color": "#667eea"
                         }),
                         html.Span(" Vehicles", style={
-                            "fontSize": "14px",
+                            "fontSize": "13px",
                             "color": "#666",
                             "marginLeft": "5px"
                         }),
-                    ], style={"marginBottom": "8px"}),
+                    ], style={"marginBottom": "6px"}),
                     html.Div([
                         html.Span(str(incident_count), style={
-                            "fontSize": "24px",
+                            "fontSize": "20px",
                             "fontWeight": "bold",
                             "color": "#f5576c" if incident_count > 0 else "#4CAF50"
                         }),
                         html.Span(" Incidents", style={
-                            "fontSize": "14px",
+                            "fontSize": "13px",
                             "color": "#666",
                             "marginLeft": "5px"
                         }),
                     ]),
                 ], style={
-                    "marginBottom": "15px",
-                    "padding": "15px",
+                    "marginBottom": "0",
+                    "padding": "12px",
                     "background": "#f8f9fa",
                     "borderRadius": "8px"
                 }),
-                
-                # View Full button
-                html.A(
-                    html.Button("View Full Screen", style={
-                        "width": "100%",
-                        "padding": "12px",
-                        "fontSize": "15px",
-                        "fontWeight": "600",
-                        "background": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
-                        "color": "white",
-                        "border": "none",
-                        "borderRadius": "8px",
-                        "cursor": "pointer",
-                        "boxShadow": "0 2px 10px rgba(102, 126, 234, 0.3)",
-                        "transition": "all 0.3s ease"
-                    }),
-                    href=f"http://127.0.0.1:8053?location={location}",
-                    target="_blank",
-                ),
-            ], style={
+            ], 
+            href=f"http://127.0.0.1:8053?location={location}",
+            target="_blank",
+            style={
                 "background": "white",
-                "padding": "20px",
+                "padding": "16px",
                 "borderRadius": "12px",
                 "boxShadow": "0 4px 20px rgba(0,0,0,0.08)",
                 "border": "2px solid #eee",
-                "transition": "all 0.3s ease"
-            }, className="camera-card")
+                "transition": "all 0.3s ease",
+                "textDecoration": "none",
+                "display": "block",
+                "cursor": "pointer"
+            }, 
+            className="camera-card")
             
             camera_cards.append(card)
         
