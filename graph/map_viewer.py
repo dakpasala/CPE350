@@ -65,12 +65,13 @@ INCIDENT_COLOR = "rgb(255,0,255)"
 # Data Processing
 # =========================
 
-def process_window_data(raw_data):
+def process_window_data(raw_data, location_filter="all"):
     """
     Process raw window data from backend into 1-second frames.
     
     Args:
         raw_data: Dict with vehicles, incidents, timestamp from backend
+        location_filter: Filter by location ("all", "patterson", "foothill", etc.)
     
     Returns:
         Processed data dict with frames, or None if invalid
@@ -82,6 +83,11 @@ def process_window_data(raw_data):
         vehicles = raw_data.get("vehicles", [])
         incidents = raw_data.get("incidents", [])
         timestamp = raw_data.get("timestamp")
+        
+        # Filter by location if needed
+        if location_filter != "all":
+            vehicles = [v for v in vehicles if v.get("location") == location_filter]
+            incidents = [i for i in incidents if i.get("location") == location_filter]
         
         if not vehicles:
             return None
@@ -126,11 +132,12 @@ def process_window_data(raw_data):
             "incidents": incidents,
             "timestamp": timestamp,
             "frames": frames,
-            "data_id": timestamp  # Use timestamp as unique ID
+            "data_id": timestamp,  # Use timestamp as unique ID
+            "location_filter": location_filter
         }
     
     except Exception as e:
-        print(f"⚠️  Error processing data: {e}")
+        print(f"Error processing data: {e}")
         import traceback
         traceback.print_exc()
         return None
@@ -206,7 +213,7 @@ def build_figure(center, frame_vehicles, all_vehicles, incidents, lat_off=0.0, l
             
             if has_incident:
                 color = INCIDENT_COLOR
-                typ = f"{v.get('detected_type', 'unknown')} 🚨"
+                typ = f"{v.get('detected_type', 'unknown')} [INCIDENT]"
             else:
                 typ = str(v.get("detected_type", "unknown")).lower()
                 color = COLOR_MAP.get(typ, DEFAULT_COLOR)
@@ -274,7 +281,7 @@ def build_figure(center, frame_vehicles, all_vehicles, incidents, lat_off=0.0, l
                 lat=inc_lats,
                 mode="markers+text",
                 marker=dict(size=22, opacity=0.7, color="rgb(255,0,0)"),
-                text=["⚠️"] * len(inc_lats),
+                text=["!"] * len(inc_lats),
                 hovertext=inc_texts,
                 hoverinfo="text",
             ))
@@ -302,7 +309,7 @@ def build_figure(center, frame_vehicles, all_vehicles, incidents, lat_off=0.0, l
 
 def main():
     # Start immediately with empty data (don't wait)
-    print("🚀 Starting map viewer (waiting for data)...")
+    print("Starting map viewer (waiting for data)...")
     
     # Initialize with empty data structure
     data = {
@@ -310,7 +317,8 @@ def main():
         "incidents": [],
         "timestamp": "Waiting...",
         "frames": [],
-        "data_id": None
+        "data_id": None,
+        "location_filter": "all"
     }
     
     # Create initial empty figure
@@ -325,25 +333,58 @@ def main():
         # Header with gradient
         html.Div([
             html.Div([
-                html.H2("🔴 LIVE TRAFFIC MONITORING", style={
+                html.H2("LIVE TRAFFIC MONITORING", style={
                     "color": "white",
                     "margin": "0",
                     "fontSize": "28px",
                     "fontWeight": "bold",
                     "textShadow": "2px 2px 4px rgba(0,0,0,0.3)"
                 }),
-                html.P("Real-time incident detection • 15-20s delay", style={
+                html.P("Real-time incident detection", style={
                     "color": "rgba(255,255,255,0.9)",
                     "margin": "5px 0 0 0",
                     "fontSize": "14px"
                 }),
             ], style={"flex": "1"}),
             
+            # Location selector dropdown
+            html.Div([
+                html.Label("Location:", style={
+                    "color": "white",
+                    "marginRight": "10px",
+                    "fontSize": "14px",
+                    "fontWeight": "600"
+                }),
+                dcc.Dropdown(
+                    id="location-selector",
+                    options=[],  # Will be populated dynamically
+                    value="all",
+                    clearable=False,
+                    style={
+                        "width": "200px",
+                        "display": "inline-block"
+                    }
+                ),
+            ], style={"marginRight": "20px", "display": "flex", "alignItems": "center"}),
+            
             html.A(
-                html.Button([
-                    html.Span("🎥 ", style={"fontSize": "20px"}),
-                    "View All Incidents"
-                ], style={
+                html.Button("Home", style={
+                    "fontSize": "16px",
+                    "padding": "12px 24px",
+                    "background": "white",
+                    "color": "#667eea",
+                    "border": "2px solid white",
+                    "borderRadius": "8px",
+                    "cursor": "pointer",
+                    "fontWeight": "600",
+                    "boxShadow": "0 4px 15px rgba(0,0,0,0.2)",
+                    "transition": "all 0.3s ease",
+                    "marginRight": "10px",
+                }),
+                href="http://127.0.0.1:8050",
+            ),
+            html.A(
+                html.Button("View All Incidents", style={
                     "fontSize": "16px",
                     "padding": "12px 24px",
                     "background": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
@@ -354,15 +395,13 @@ def main():
                     "fontWeight": "600",
                     "boxShadow": "0 4px 15px rgba(0,0,0,0.2)",
                     "transition": "all 0.3s ease",
+                    "marginRight": "10px",
                 }),
                 href="http://127.0.0.1:8051",
                 target="_blank",
             ),
             html.A(
-                html.Button([
-                    html.Span("🔥 ", style={"fontSize": "20px"}),
-                    "Traffic Heatmap"
-                ], style={
+                html.Button("Traffic Heatmap", style={
                     "fontSize": "16px",
                     "padding": "12px 24px",
                     "background": "linear-gradient(135deg, #f093fb 0%, #f5576c 100%)",
@@ -402,12 +441,47 @@ def main():
         # Map
         html.Div([
             dcc.Graph(id="map", figure=fig, style={"height": "100%", "width": "100%"}),
+            
+            # No Data Overlay
+            html.Div(
+                id="no-data-overlay",
+                style={"display": "none"},  # Hidden by default
+                children=[
+                    html.Div([
+                        html.H2("No Data Received", style={
+                            "color": "#666",
+                            "marginBottom": "10px",
+                            "fontSize": "32px"
+                        }),
+                        html.P("Waiting for vehicle data from camera...", style={
+                            "color": "#999",
+                            "fontSize": "16px"
+                        }),
+                        html.Div("", id="waiting-spinner", style={
+                            "width": "50px",
+                            "height": "50px",
+                            "border": "5px solid #f3f3f3",
+                            "borderTop": "5px solid #667eea",
+                            "borderRadius": "50%",
+                            "animation": "spin 1s linear infinite",
+                            "margin": "20px auto"
+                        }),
+                    ], style={
+                        "background": "white",
+                        "padding": "40px",
+                        "borderRadius": "12px",
+                        "boxShadow": "0 4px 20px rgba(0,0,0,0.1)",
+                        "textAlign": "center"
+                    })
+                ]
+            )
         ], style={
             "height": "700px",
             "borderRadius": "12px",
             "overflow": "hidden",
             "boxShadow": "0 4px 20px rgba(0,0,0,0.1)",
-            "marginBottom": "20px"
+            "marginBottom": "20px",
+            "position": "relative"  # For absolute positioning of overlay
         }),
         
         # Controls panel
@@ -421,7 +495,7 @@ def main():
                 }),
                 
                 html.Div([
-                    html.Button("⏸️ Pause", id="pause-btn", n_clicks=0, style={
+                    html.Button("Pause", id="pause-btn", n_clicks=0, style={
                         "marginRight": "10px",
                         "padding": "10px 20px",
                         "fontSize": "15px",
@@ -432,7 +506,7 @@ def main():
                         "cursor": "pointer",
                         "fontWeight": "500"
                     }),
-                    html.Button("▶️ Resume", id="play-btn", n_clicks=0, style={
+                    html.Button("Resume", id="play-btn", n_clicks=0, style={
                         "padding": "10px 20px",
                         "fontSize": "15px",
                         "borderRadius": "6px",
@@ -447,17 +521,17 @@ def main():
                 # Camera controls in grid
                 html.Div([
                     html.Div([
-                        html.Label("📐 Camera Pitch", style={"fontWeight": "600", "marginBottom": "8px", "display": "block", "color": "#555"}),
+                        html.Label("Camera Pitch", style={"fontWeight": "600", "marginBottom": "8px", "display": "block", "color": "#555"}),
                         dcc.Slider(0, 85, step=10, value=60, id="pitch-slider", marks={0: "0°", 45: "45°", 85: "85°"}),
                     ], style={"marginBottom": "20px"}),
                     
                     html.Div([
-                        html.Label("🧭 Camera Bearing", style={"fontWeight": "600", "marginBottom": "8px", "display": "block", "color": "#555"}),
+                        html.Label("Camera Bearing", style={"fontWeight": "600", "marginBottom": "8px", "display": "block", "color": "#555"}),
                         dcc.Slider(0, 360, step=15, value=30, id="bearing-slider", marks={0: "N", 90: "E", 180: "S", 270: "W"}),
                     ], style={"marginBottom": "20px"}),
                     
                     html.Div([
-                        html.Label("🗺️ Latitude Offset", style={"fontWeight": "600", "marginBottom": "8px", "display": "block", "color": "#555"}),
+                        html.Label("Latitude Offset", style={"fontWeight": "600", "marginBottom": "8px", "display": "block", "color": "#555"}),
                         dcc.Slider(
                             id="lat-offset-slider",
                             min=-0.001, max=0.001, step=0.00001, value=0.0,
@@ -467,7 +541,7 @@ def main():
                     ], style={"marginBottom": "20px"}),
                     
                     html.Div([
-                        html.Label("🗺️ Longitude Offset", style={"fontWeight": "600", "marginBottom": "8px", "display": "block", "color": "#555"}),
+                        html.Label("Longitude Offset", style={"fontWeight": "600", "marginBottom": "8px", "display": "block", "color": "#555"}),
                         dcc.Slider(
                             id="lon-offset-slider",
                             min=-0.001, max=0.001, step=0.00001, value=0.0,
@@ -496,6 +570,7 @@ def main():
         dcc.Store(id="alert-active", data=False),
         dcc.Store(id="last-alerted-data-id", data=None),
         dcc.Store(id="current-incident-id", data=None),
+        dcc.Store(id="raw-data-store", data=None),  # Store raw unfiltered data
 
         # Enhanced Incident modal with video
         html.Div(
@@ -515,10 +590,7 @@ def main():
                     children=[
                         # Header
                         html.Div([
-                            html.H2([
-                                html.Span("🚨", style={"fontSize": "32px", "marginRight": "10px"}),
-                                "Incident Detected"
-                            ], style={"margin": "0", "color": "white", "fontSize": "24px"}),
+                            html.H2("Incident Detected", style={"margin": "0", "color": "white", "fontSize": "24px"}),
                         ], style={
                             "padding": "20px 30px",
                             "background": "linear-gradient(135deg, #f093fb 0%, #f5576c 100%)",
@@ -535,10 +607,7 @@ def main():
                         
                         # Footer with buttons
                         html.Div([
-                            html.Button([
-                                html.Span("🎥 ", style={"fontSize": "18px"}),
-                                "Watch Video"
-                            ], id="watch-video-btn", n_clicks=0, style={
+                            html.Button("Watch Video", id="watch-video-btn", n_clicks=0, style={
                                 "padding": "12px 24px",
                                 "fontSize": "16px",
                                 "borderRadius": "8px",
@@ -572,7 +641,7 @@ def main():
         ),
         
         html.Div(
-            f"🎬 {PLAYBACK_FPS} FPS Playback • http://{HOST}:{PORT}",
+            f"{PLAYBACK_FPS} FPS Playback • http://{HOST}:{PORT}",
             style={"marginTop": "20px", "textAlign": "center", "color": "#999", "fontSize": "13px"}
         ),
     ], style={
@@ -582,26 +651,111 @@ def main():
         "fontFamily": "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
     })
     
+    # Add CSS for spinner animation
+    app.index_string = '''
+    <!DOCTYPE html>
+    <html>
+        <head>
+            {%metas%}
+            <title>{%title%}</title>
+            {%favicon%}
+            {%css%}
+            <style>
+                @keyframes spin {
+                    0% { transform: rotate(0deg); }
+                    100% { transform: rotate(360deg); }
+                }
+            </style>
+        </head>
+        <body>
+            {%app_entry%}
+            <footer>
+                {%config%}
+                {%scripts%}
+                {%renderer%}
+            </footer>
+        </body>
+    </html>
+    '''
+    
+    @app.callback(
+        Output("no-data-overlay", "style"),
+        Input("data-store", "data"),
+    )
+    def toggle_no_data_overlay(data):
+        """Show overlay when no data, hide when data exists."""
+        if not data or not data.get("vehicles"):
+            # Show overlay
+            return {
+                "display": "flex",
+                "position": "absolute",
+                "top": 0,
+                "left": 0,
+                "width": "100%",
+                "height": "100%",
+                "backgroundColor": "rgba(245, 247, 250, 0.95)",
+                "zIndex": 1000,
+                "alignItems": "center",
+                "justifyContent": "center",
+                "borderRadius": "12px"
+            }
+        else:
+            # Hide overlay
+            return {"display": "none"}
+    
+    @app.callback(
+        Output("raw-data-store", "data"),
+        Input("reload-interval", "n_intervals"),
+    )
+    def fetch_raw_data(n):
+        """Fetch raw unfiltered data from shared memory."""
+        raw_data = get_latest_data()
+        if raw_data is None:
+            return dash.no_update
+        return raw_data
+    
+    @app.callback(
+        Output("location-selector", "options"),
+        Output("location-selector", "value"),
+        Input("raw-data-store", "data"),
+        State("location-selector", "value"),
+    )
+    def populate_location_dropdown(raw_data, current_value):
+        """Populate dropdown with available locations from data."""
+        if not raw_data or not raw_data.get("vehicles"):
+            return [], "all"
+        
+        # Get unique locations from data
+        locations = sorted(set(v.get("location") for v in raw_data["vehicles"] if v.get("location")))
+        
+        options = [{"label": "All Locations", "value": "all"}]
+        options.extend([{"label": loc.title(), "value": loc} for loc in locations])
+        
+        # Default to first location if only one exists
+        default_value = current_value if current_value else ("all" if len(locations) > 1 else locations[0])
+        
+        return options, default_value
+    
     @app.callback(
         Output("data-store", "data"),
         Output("current-frame", "data"),
-        Input("reload-interval", "n_intervals"),
+        Input("raw-data-store", "data"),
+        Input("location-selector", "value"),
         State("data-store", "data"),
     )
-    def check_for_new_data(n, current_data):
-        """Check shared memory for new data every second."""
-        raw_data = get_latest_data()
-        new_data = process_window_data(raw_data)
+    def process_and_filter_data(raw_data, location_filter, current_data):
+        """Process raw data with location filter."""
+        new_data = process_window_data(raw_data, location_filter)
         
         if new_data is None:
             return dash.no_update, dash.no_update
         
-        # Check if data changed (compare timestamp)
-        if current_data and new_data["data_id"] == current_data.get("data_id"):
+        # Check if data changed
+        if current_data and new_data["data_id"] == current_data.get("data_id") and new_data["location_filter"] == current_data.get("location_filter"):
             return dash.no_update, dash.no_update
         
-        # New data arrived! Reset to frame 0
-        print(f"📥 New data! {len(new_data['frames'])} frames, {len(new_data['vehicles'])} observations")
+        # New data or filter changed! Reset to frame 0
+        print(f"New data! {len(new_data['frames'])} frames, {len(new_data['vehicles'])} observations (location: {location_filter})")
         return new_data, 0
     
     @app.callback(
@@ -611,34 +765,27 @@ def main():
     def update_stats(data):
         """Update stats bar."""
         if not data or not data.get("vehicles"):
-            return html.Div("⏳ Waiting for data...", style={"color": "#999"})
+            return html.Div("Waiting for data...", style={"color": "#999"})
         
         unique_ids = len(set(v.get("id") for v in data["vehicles"]))
         incident_count = len(data.get("incidents", []))
+        location = data.get("location_filter", "all")
         
         return html.Div([
-            html.Span([
-                html.Span("📅 ", style={"fontSize": "18px"}),
-                data.get('timestamp', 'Unknown')
-            ], style={"marginRight": "30px", "fontWeight": "500"}),
-            html.Span([
-                html.Span("🚗 ", style={"fontSize": "18px"}),
-                f"{unique_ids} Vehicles"
-            ], style={"marginRight": "30px", "fontWeight": "500"}),
-            html.Span([
-                html.Span("🎬 ", style={"fontSize": "18px"}),
-                f"{len(data.get('frames', []))} Frames"
-            ], style={"marginRight": "30px", "fontWeight": "500"}),
-            html.Span([
-                html.Span("🚨 ", style={"fontSize": "18px"}),
-                f"{incident_count} Incidents"
-            ], style={
-                "fontWeight": "bold",
-                "color": "#f5576c" if incident_count > 0 else "#4CAF50",
-                "padding": "6px 12px",
-                "borderRadius": "6px",
-                "background": "rgba(245, 87, 108, 0.1)" if incident_count > 0 else "rgba(76, 175, 80, 0.1)"
-            }),
+            html.Span(data.get('timestamp', 'Unknown'), style={"marginRight": "30px", "fontWeight": "500"}),
+            html.Span(f"{unique_ids} Vehicles", style={"marginRight": "30px", "fontWeight": "500"}),
+            html.Span(f"{len(data.get('frames', []))} Frames", style={"marginRight": "30px", "fontWeight": "500"}),
+            html.Span(f"Location: {location.upper()}", style={"marginRight": "30px", "fontWeight": "500"}),
+            html.Span(
+                f"{incident_count} Incidents",
+                style={
+                    "fontWeight": "bold",
+                    "color": "#f5576c" if incident_count > 0 else "#4CAF50",
+                    "padding": "6px 12px",
+                    "borderRadius": "6px",
+                    "background": "rgba(245, 87, 108, 0.1)" if incident_count > 0 else "rgba(76, 175, 80, 0.1)"
+                }
+            ),
         ])
 
     @app.callback(
@@ -686,7 +833,7 @@ def main():
             )
 
         modal_text = html.Div([
-            html.Div(f"⚠️ {len(incidents)} incident(s) detected in this 15-second window", style={
+            html.Div(f"{len(incidents)} incident(s) detected in this 15-second window", style={
                 "marginBottom": "15px",
                 "fontSize": "16px",
                 "fontWeight": "600",
@@ -735,7 +882,7 @@ def main():
                     
                     return html.Div([
                         html.Hr(style={"margin": "20px 0"}),
-                        html.H4("📹 Incident Video", style={"marginBottom": "15px"}),
+                        html.H4("Incident Video", style={"marginBottom": "15px"}),
                         html.Video(
                             src=f"{API_BASE_URL}/videos/{video_id}",
                             controls=True,
@@ -748,11 +895,11 @@ def main():
                         ),
                     ])
                 else:
-                    return html.Div("⚠️ No video available for this incident", style={"color": "#f5576c", "marginTop": "15px"})
+                    return html.Div("No video available for this incident", style={"color": "#f5576c", "marginTop": "15px"})
             else:
-                return html.Div("⚠️ Could not load video", style={"color": "#f5576c", "marginTop": "15px"})
+                return html.Div("Could not load video", style={"color": "#f5576c", "marginTop": "15px"})
         except Exception as e:
-            return html.Div(f"⚠️ Error loading video: {str(e)}", style={"color": "#f5576c", "marginTop": "15px"})
+            return html.Div(f"Error loading video: {str(e)}", style={"color": "#f5576c", "marginTop": "15px"})
     
     @app.callback(
         Output("incident-modal", "style", allow_duplicate=True),
@@ -777,17 +924,17 @@ def main():
     def update_time_display(frame_idx, data):
         """Show current frame timestamp."""
         if not data or not data.get("frames"):
-            return "⏱️ Waiting for data..."
+            return "Waiting for data..."
         
         frames = data["frames"]
         if frame_idx >= len(frames):
-            return "⏱️ Loading..."
+            return "Loading..."
         
         frame = frames[frame_idx]
         ts_display = frame.get("timestamp_display", "")
         num_vehicles = len(frame.get("vehicles", []))
         
-        return f"⏱️ {ts_display} • Frame {frame_idx + 1}/{len(frames)} • {num_vehicles} vehicles"
+        return f"{ts_display} • Frame {frame_idx + 1}/{len(frames)} • {num_vehicles} vehicles"
     
     @app.callback(
         Output("current-frame", "data", allow_duplicate=True),
@@ -867,8 +1014,8 @@ def main():
     print("\n" + "=" * 60)
     print("Live Traffic Feed - Enhanced UI")
     print("=" * 60)
-    print(f"📍 Open: http://{HOST}:{PORT}")
-    print(f"🎬 Playing at {PLAYBACK_FPS} FPS (real-time)")
+    print(f"Open: http://{HOST}:{PORT}")
+    print(f"Playing at {PLAYBACK_FPS} FPS (real-time)")
     print("=" * 60 + "\n")
     
     app.run(debug=False, host=HOST, port=PORT, use_reloader=False)

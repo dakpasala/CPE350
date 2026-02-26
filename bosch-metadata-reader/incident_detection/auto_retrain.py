@@ -15,9 +15,25 @@ from sklearn.ensemble import IsolationForest
 from sklearn.preprocessing import StandardScaler
 
 # Add parent directory to path to import from root-level data.py
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+script_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(script_dir)
+sys.path.insert(0, parent_dir)
 
-from data import load_all_combined_stats  # ← Import from root data.py
+# Import from the ROOT data.py (MongoDB functions)
+# Need to import the functions that exist in root data.py
+import pymongo
+import configparser
+
+def get_db():
+    """Get MongoDB database connection."""
+    config = configparser.ConfigParser()
+    config.read(os.path.join(parent_dir, "connection.ini"))
+    client = pymongo.MongoClient(config["DEFAULT"]["database"])
+    return client["traffic_incidents"]
+
+# Import from root data.py
+sys.path.insert(0, parent_dir)
+from data import load_all_combined_stats
 
 
 # =========================
@@ -262,7 +278,6 @@ def check_and_train_for_location(location):
             return False  # Too soon to retrain
     
     # Check data count
-    from data import get_db
     db = get_db()
     count = db.combined_stats.count_documents({"location": location})
     
