@@ -4,10 +4,11 @@ client.py
 
 Combined launcher with SHARED MEMORY (no JSON file).
 WebSocket receives data -> stores in memory -> viewers read it.
-Now includes THREE viewers:
-1. Map viewer - animated vehicle tracking
-2. Incident viewer - browse accident videos  
-3. Heatmap viewer - traffic density visualization
+Now includes FOUR viewers:
+1. Dashboard - multi-camera security room grid (port 8050)
+2. Map viewer - animated single camera tracking (port 8053)
+3. Incident viewer - browse accident videos (port 8051)
+4. Heatmap viewer - traffic density visualization (port 8052)
 """
 
 import asyncio
@@ -18,10 +19,16 @@ import os
 from pathlib import Path
 from threading import Lock
 
-# Add visualization directory to path for heatmap_viewer
+# Set ports BEFORE importing (so modules read correct defaults)
+os.environ.setdefault("PORT", "8050")  # Dashboard default
+
+# Import dashboard from current directory
+import dashboard
+
+# Add visualization directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent / 'visualization'))
 
-# Import viewers
+# Import viewers from visualization/
 import map_viewer
 import incident_viewer
 import heatmap_viewer
@@ -132,6 +139,26 @@ def run_websocket_client():
     loop.run_until_complete(websocket_receiver())
 
 
+def run_dashboard():
+    """Run security dashboard in main thread."""
+    # Override module-level defaults
+    dashboard.HOST = "127.0.0.1"
+    dashboard.PORT = 8050
+    
+    dashboard.main()
+
+
+def run_map_viewer():
+    """Run map viewer in background thread."""
+    print("[START] [Map Viewer] Starting on http://127.0.0.1:8053...")
+    
+    # Override module-level defaults
+    map_viewer.HOST = "127.0.0.1"
+    map_viewer.PORT = 8053
+    
+    map_viewer.main()
+
+
 def run_incident_viewer():
     """Run incident viewer in background thread."""
     print("[START] [Incident Viewer] Starting on http://127.0.0.1:8051...")
@@ -153,17 +180,19 @@ def main():
     print(" " * 15 + "LIVE TRAFFIC MONITORING CLIENT")
     print("=" * 70)
     print()
-    print("Starting FOUR components:")
+    print("Starting FIVE components:")
     print("  1. WebSocket Client    -> Receives data from backend")
-    print("  2. Map Viewer          -> http://127.0.0.1:8050 ✅")
-    print("  3. Incident Viewer     -> http://127.0.0.1:8051 ✅")
-    print("  4. Heatmap Viewer      -> http://YOUR_IP:8052 🔥")
+    print("  2. Dashboard           -> http://127.0.0.1:8050 🏠 (MAIN)")
+    print("  3. Map Viewer          -> http://127.0.0.1:8053 🗺️")
+    print("  4. Incident Viewer     -> http://127.0.0.1:8051 🎥")
+    print("  5. Heatmap Viewer      -> http://YOUR_IP:8052 🔥")
     print()
     print("Using SHARED MEMORY (no JSON file)")
     print("=" * 70)
     print()
     
     # Inject the get_latest_data function into all viewer modules
+    dashboard.get_latest_data = get_latest_data
     map_viewer.get_latest_data = get_latest_data
     incident_viewer.get_latest_data = get_latest_data
     heatmap_viewer.get_latest_data = get_latest_data
@@ -175,6 +204,14 @@ def main():
     
     # Give WebSocket a moment to start
     time.sleep(1)
+    
+    # Start map viewer in background thread (port 8053)
+    print("[START] [Map Viewer] Starting background map viewer...")
+    map_thread = threading.Thread(target=run_map_viewer, daemon=True)
+    map_thread.start()
+    
+    # Give map viewer a moment to start
+    time.sleep(2)
     
     # Start incident viewer in background thread
     print("[START] [Incident Viewer] Starting background viewer...")
@@ -211,12 +248,14 @@ def main():
     print("=" * 70)
     print()
     
-    # Start map viewer (this blocks - runs Dash server)
-    print("[START] [Map Viewer] Starting interactive map viewer...")
+    # Start dashboard (this blocks - runs Dash server on main thread)
+    print("[START] [Dashboard] Starting security dashboard...")
+    print()
+    print("💡 TIP: Open http://127.0.0.1:8050 to see all cameras!")
     print()
     
     try:
-        map_viewer.main()
+        run_dashboard()
     except KeyboardInterrupt:
         print("\n\n[EXIT] Shutting down client...")
         sys.exit(0)

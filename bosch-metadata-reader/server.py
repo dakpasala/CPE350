@@ -20,7 +20,7 @@ from combined_statistics import ( process_raw_docs, save_stats )
 from incident_detection.engine import detect_incidents
 from incident_detection.models import load_latest_models
 from incident_detection.data import scale_per_location
-from incident_detection.auto_retrain import check_and_train_for_location  
+from incident_detection.auto_retrain import check_and_train_for_location  # ← Re-enabled!
 
 from email_alert import send_incident_email
 

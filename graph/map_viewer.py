@@ -357,11 +357,7 @@ def main():
                 }),
                 dcc.Dropdown(
                     id="location-selector",
-                    options=[
-                        {"label": "All Locations", "value": "all"},
-                        {"label": "Patterson", "value": "patterson"},
-                        {"label": "Foothill", "value": "foothill"},
-                    ],
+                    options=[],  # Will be populated dynamically
                     value="all",
                     clearable=False,
                     style={
@@ -371,6 +367,22 @@ def main():
                 ),
             ], style={"marginRight": "20px", "display": "flex", "alignItems": "center"}),
             
+            html.A(
+                html.Button("Home", style={
+                    "fontSize": "16px",
+                    "padding": "12px 24px",
+                    "background": "white",
+                    "color": "#667eea",
+                    "border": "2px solid white",
+                    "borderRadius": "8px",
+                    "cursor": "pointer",
+                    "fontWeight": "600",
+                    "boxShadow": "0 4px 15px rgba(0,0,0,0.2)",
+                    "transition": "all 0.3s ease",
+                    "marginRight": "10px",
+                }),
+                href="http://127.0.0.1:8050",
+            ),
             html.A(
                 html.Button("View All Incidents", style={
                     "fontSize": "16px",
@@ -701,6 +713,28 @@ def main():
         if raw_data is None:
             return dash.no_update
         return raw_data
+    
+    @app.callback(
+        Output("location-selector", "options"),
+        Output("location-selector", "value"),
+        Input("raw-data-store", "data"),
+        State("location-selector", "value"),
+    )
+    def populate_location_dropdown(raw_data, current_value):
+        """Populate dropdown with available locations from data."""
+        if not raw_data or not raw_data.get("vehicles"):
+            return [], "all"
+        
+        # Get unique locations from data
+        locations = sorted(set(v.get("location") for v in raw_data["vehicles"] if v.get("location")))
+        
+        options = [{"label": "All Locations", "value": "all"}]
+        options.extend([{"label": loc.title(), "value": loc} for loc in locations])
+        
+        # Default to first location if only one exists
+        default_value = current_value if current_value else ("all" if len(locations) > 1 else locations[0])
+        
+        return options, default_value
     
     @app.callback(
         Output("data-store", "data"),
