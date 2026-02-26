@@ -429,12 +429,47 @@ def main():
         # Map
         html.Div([
             dcc.Graph(id="map", figure=fig, style={"height": "100%", "width": "100%"}),
+            
+            # No Data Overlay
+            html.Div(
+                id="no-data-overlay",
+                style={"display": "none"},  # Hidden by default
+                children=[
+                    html.Div([
+                        html.H2("No Data Received", style={
+                            "color": "#666",
+                            "marginBottom": "10px",
+                            "fontSize": "32px"
+                        }),
+                        html.P("Waiting for vehicle data from camera...", style={
+                            "color": "#999",
+                            "fontSize": "16px"
+                        }),
+                        html.Div("", id="waiting-spinner", style={
+                            "width": "50px",
+                            "height": "50px",
+                            "border": "5px solid #f3f3f3",
+                            "borderTop": "5px solid #667eea",
+                            "borderRadius": "50%",
+                            "animation": "spin 1s linear infinite",
+                            "margin": "20px auto"
+                        }),
+                    ], style={
+                        "background": "white",
+                        "padding": "40px",
+                        "borderRadius": "12px",
+                        "boxShadow": "0 4px 20px rgba(0,0,0,0.1)",
+                        "textAlign": "center"
+                    })
+                ]
+            )
         ], style={
             "height": "700px",
             "borderRadius": "12px",
             "overflow": "hidden",
             "boxShadow": "0 4px 20px rgba(0,0,0,0.1)",
-            "marginBottom": "20px"
+            "marginBottom": "20px",
+            "position": "relative"  # For absolute positioning of overlay
         }),
         
         # Controls panel
@@ -603,6 +638,58 @@ def main():
         "minHeight": "100vh",
         "fontFamily": "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
     })
+    
+    # Add CSS for spinner animation
+    app.index_string = '''
+    <!DOCTYPE html>
+    <html>
+        <head>
+            {%metas%}
+            <title>{%title%}</title>
+            {%favicon%}
+            {%css%}
+            <style>
+                @keyframes spin {
+                    0% { transform: rotate(0deg); }
+                    100% { transform: rotate(360deg); }
+                }
+            </style>
+        </head>
+        <body>
+            {%app_entry%}
+            <footer>
+                {%config%}
+                {%scripts%}
+                {%renderer%}
+            </footer>
+        </body>
+    </html>
+    '''
+    
+    @app.callback(
+        Output("no-data-overlay", "style"),
+        Input("data-store", "data"),
+    )
+    def toggle_no_data_overlay(data):
+        """Show overlay when no data, hide when data exists."""
+        if not data or not data.get("vehicles"):
+            # Show overlay
+            return {
+                "display": "flex",
+                "position": "absolute",
+                "top": 0,
+                "left": 0,
+                "width": "100%",
+                "height": "100%",
+                "backgroundColor": "rgba(245, 247, 250, 0.95)",
+                "zIndex": 1000,
+                "alignItems": "center",
+                "justifyContent": "center",
+                "borderRadius": "12px"
+            }
+        else:
+            # Hide overlay
+            return {"display": "none"}
     
     @app.callback(
         Output("raw-data-store", "data"),
