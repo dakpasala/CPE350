@@ -225,20 +225,16 @@ app.title = "Incident Video Viewer"
 app.layout = html.Div(id="main-container", children=[
     # Dark mode toggle
     html.Div([
+        html.Span("☀️", style={"fontSize": "20px", "marginRight": "12px"}),
         html.Label([
-            html.Span("☀️", style={"marginRight": "8px", "fontSize": "18px"}),
-            "Light",
-        ], style={"marginRight": "10px", "color": "inherit"}),
-        dcc.Checklist(
-            id="dark-mode-toggle",
-            options=[{"label": "", "value": "dark"}],
-            value=[],
-            style={"margin": "0 10px"}
-        ),
-        html.Label([
-            "Dark",
-            html.Span("🌙", style={"marginLeft": "8px", "fontSize": "18px"}),
-        ], style={"color": "inherit"}),
+            dcc.Checklist(
+                id="dark-mode-toggle",
+                options=[{"label": "", "value": "dark"}],
+                value=[],
+                className="toggle-switch"
+            ),
+        ], className="toggle-container"),
+        html.Span("🌙", style={"fontSize": "20px", "marginLeft": "12px"}),
     ], style={
         "position": "fixed",
         "top": "20px",
@@ -246,12 +242,11 @@ app.layout = html.Div(id="main-container", children=[
         "zIndex": 10000,
         "display": "flex",
         "alignItems": "center",
-        "background": "white",
-        "padding": "10px 15px",
-        "borderRadius": "25px",
-        "boxShadow": "0 2px 10px rgba(0,0,0,0.1)",
-        "fontSize": "14px",
-        "fontWeight": "500"
+        "padding": "8px 16px",
+        "borderRadius": "30px",
+        "backgroundColor": "rgba(255, 255, 255, 0.9)",
+        "backdropFilter": "blur(10px)",
+        "boxShadow": "0 4px 12px rgba(0,0,0,0.15)",
     }),
     
     dbc.Container([

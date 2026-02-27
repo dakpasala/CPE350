@@ -205,22 +205,16 @@ def main():
     app.layout = html.Div([
         # Dark mode toggle
         html.Div([
-            html.Label([
-                html.Span("☀️", style={"marginRight": "8px", "fontSize": "18px"}),
-                "Light",
-            ], style={"marginRight": "10px", "color": "inherit"}),
+            html.Span("☀️", style={"fontSize": "20px", "marginRight": "12px"}),
             html.Label([
                 dcc.Checklist(
                     id="dark-mode-toggle",
                     options=[{"label": "", "value": "dark"}],
                     value=[],
-                    style={"margin": "0"}
+                    className="toggle-switch"
                 ),
-            ], style={"marginRight": "10px"}),
-            html.Label([
-                "Dark",
-                html.Span("🌙", style={"marginLeft": "8px", "fontSize": "18px"}),
-            ], style={"color": "inherit"}),
+            ], className="toggle-container"),
+            html.Span("🌙", style={"fontSize": "20px", "marginLeft": "12px"}),
         ], style={
             "position": "fixed",
             "top": "20px",
@@ -228,12 +222,11 @@ def main():
             "zIndex": 10000,
             "display": "flex",
             "alignItems": "center",
-            "background": "white",
-            "padding": "10px 15px",
-            "borderRadius": "25px",
-            "boxShadow": "0 2px 10px rgba(0,0,0,0.1)",
-            "fontSize": "14px",
-            "fontWeight": "500"
+            "padding": "8px 16px",
+            "borderRadius": "30px",
+            "backgroundColor": "rgba(255, 255, 255, 0.9)",
+            "backdropFilter": "blur(10px)",
+            "boxShadow": "0 4px 12px rgba(0,0,0,0.15)",
         }),
         
         # Header
@@ -504,10 +497,84 @@ def main():
             {%favicon%}
             {%css%}
             <style>
+                body {
+                    margin: 0;
+                    padding: 0;
+                    overflow-x: hidden;
+                }
+                
                 @keyframes spin {
                     0% { transform: rotate(0deg); }
                     100% { transform: rotate(360deg); }
                 }
+                
+                /* iOS-style toggle switch */
+                .toggle-container {
+                    position: relative;
+                    display: inline-block;
+                    width: 50px;
+                    height: 28px;
+                }
+                
+                .toggle-switch input[type="checkbox"] {
+                    opacity: 0;
+                    width: 0;
+                    height: 0;
+                }
+                
+                .toggle-switch {
+                    position: relative;
+                    display: inline-block;
+                    width: 50px;
+                    height: 28px;
+                }
+                
+                .toggle-switch::before {
+                    content: '';
+                    position: absolute;
+                    width: 50px;
+                    height: 28px;
+                    background: #ccc;
+                    border-radius: 28px;
+                    transition: 0.3s;
+                }
+                
+                .toggle-switch::after {
+                    content: '';
+                    position: absolute;
+                    width: 24px;
+                    height: 24px;
+                    background: white;
+                    border-radius: 50%;
+                    top: 2px;
+                    left: 2px;
+                    transition: 0.3s;
+                    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+                }
+                
+                .toggle-switch input:checked + label::before {
+                    background: #667eea;
+                }
+                
+                .toggle-switch input:checked + label::after {
+                    transform: translateX(22px);
+                }
+                
+                /* Hide default checkbox */
+                .toggle-switch input {
+                    position: absolute;
+                    opacity: 0;
+                }
+                
+                /* Style when checked */
+                .toggle-switch input:checked ~ .toggle-switch::before {
+                    background: #667eea;
+                }
+                
+                .toggle-switch input:checked ~ .toggle-switch::after {
+                    transform: translateX(22px);
+                }
+                
                 .camera-card:hover {
                     transform: translateY(-5px);
                     box-shadow: 0 8px 30px rgba(102, 126, 234, 0.3) !important;
