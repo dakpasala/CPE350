@@ -344,6 +344,46 @@ body { margin: 0; padding: 0; overflow-x: hidden; }
 [data-theme="dark"] .card-title { color: #e0e0e0 !important; }
 [data-theme="dark"] .card-meta { color: #aaa !important; }
 
+/* Dark mode for Dash dropdowns */
+[data-theme="dark"] .Select-control,
+[data-theme="dark"] .dash-dropdown .Select-control {
+    background: #1a1a1a !important;
+    border-color: #404040 !important;
+    color: #e0e0e0 !important;
+}
+[data-theme="dark"] .Select-value-label,
+[data-theme="dark"] .Select-placeholder,
+[data-theme="dark"] .dash-dropdown .Select-value-label {
+    color: #e0e0e0 !important;
+}
+[data-theme="dark"] .Select-menu-outer,
+[data-theme="dark"] .dash-dropdown .Select-menu-outer {
+    background: #2d2d2d !important;
+    border-color: #404040 !important;
+}
+[data-theme="dark"] .VirtualizedSelectOption {
+    background: #2d2d2d !important;
+    color: #e0e0e0 !important;
+}
+[data-theme="dark"] .VirtualizedSelectOption:hover,
+[data-theme="dark"] .VirtualizedSelectFocusedOption {
+    background: #404040 !important;
+}
+
+/* Dark mode for video modal */
+[data-theme="dark"] .video-modal-overlay .video-modal-body {
+    background: #2d2d2d !important;
+}
+[data-theme="dark"] #video-player-content {
+    background: #2d2d2d !important;
+}
+[data-theme="dark"] .video-modal-overlay > div {
+    background: #2d2d2d !important;
+}
+[data-theme="dark"] #video-player-content p {
+    color: #aaa !important;
+}
+
 /* Video modal */
 .video-modal-overlay {
     display: none;
@@ -843,7 +883,7 @@ def render_tab_content(tab):
     Input("search-incidents-btn", "n_clicks"),
     State("incident-timerange-select", "value"),
     State("incident-location-input", "value"),
-    prevent_initial_call=False,
+    prevent_initial_call=True,
 )
 def search_incidents(n_clicks, minutes, location):
     location = location.strip() if location else None
@@ -870,7 +910,7 @@ def search_incidents(n_clicks, minutes, location):
     Input("search-videos-btn", "n_clicks"),
     State("timerange-select", "value"),
     State("location-input", "value"),
-    prevent_initial_call=False,
+    prevent_initial_call=True,
 )
 def search_videos(n_clicks, minutes, location):
     location = location.strip() if location else None
@@ -895,7 +935,7 @@ def search_videos(n_clicks, minutes, location):
 @app.callback(
     Output("latest-video-container", "children"),
     Input("refresh-latest-btn", "n_clicks"),
-    prevent_initial_call=False,
+    prevent_initial_call=True,
 )
 def load_latest_video(n_clicks):
     videos = get_recent_videos(limit=1)
@@ -903,13 +943,9 @@ def load_latest_video(n_clicks):
         return html.Div("No videos found.", style={"padding": "40px", "textAlign": "center", "color": "#999", "fontSize": "16px"})
 
     video = videos[0]
-    video_id = video.get("_id")
     return html.Div([
         html.Div(style={"maxWidth": "640px"}, children=[
             build_video_card(video),
-            html.Div(style={"marginTop": "20px"}),
-            html.Video(src=f"{API_BASE_URL}/videos/{video_id}", controls=True,
-                style={"width": "100%", "borderRadius": "10px", "boxShadow": "0 4px 20px rgba(0,0,0,0.15)"}),
         ])
     ])
 

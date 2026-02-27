@@ -362,6 +362,85 @@ body { margin: 0; padding: 0; overflow-x: hidden; }
     color: #e0e0e0;
     box-shadow: 0 2px 8px rgba(0,0,0,0.4);
 }
+
+/* ---- Dark mode for map_viewer components ---- */
+[data-theme="dark"] #stats-bar {
+    background: #2d2d2d !important;
+    border-color: #404040 !important;
+    color: #e0e0e0 !important;
+}
+[data-theme="dark"] #time-display {
+    color: #e0e0e0 !important;
+}
+[data-theme="dark"] .controls-panel {
+    background: #2d2d2d !important;
+    border-color: #404040 !important;
+    color: #e0e0e0 !important;
+}
+[data-theme="dark"] .controls-panel label {
+    color: #aaa !important;
+}
+[data-theme="dark"] .controls-panel .rc-slider-track { background: #667eea; }
+[data-theme="dark"] .controls-panel .rc-slider-rail { background: #404040; }
+[data-theme="dark"] #offset-display {
+    color: #999 !important;
+}
+[data-theme="dark"] #no-data-overlay > div {
+    background: #2d2d2d !important;
+}
+[data-theme="dark"] #no-data-overlay h2 {
+    color: #aaa !important;
+}
+[data-theme="dark"] #no-data-overlay p {
+    color: #777 !important;
+}
+[data-theme="dark"] #incident-modal > div {
+    background: #2d2d2d !important;
+}
+[data-theme="dark"] #incident-modal > div > div:last-child {
+    border-top-color: #404040 !important;
+}
+[data-theme="dark"] #incident-modal-text {
+    color: #e0e0e0 !important;
+}
+[data-theme="dark"] #incident-modal-text > div:first-child {
+    color: #e0e0e0 !important;
+}
+[data-theme="dark"] #incident-modal-text div[style*="background"] {
+    background: #1a1a1a !important;
+}
+[data-theme="dark"] #incident-ok-btn {
+    background: #2d2d2d !important;
+    color: #aaa !important;
+    border-color: #404040 !important;
+}
+
+/* Force location dropdown in header to always be light */
+#location-selector .Select-control {
+    background: white !important;
+    border-color: #e0e0e0 !important;
+}
+#location-selector .Select-value-label,
+#location-selector .Select-placeholder,
+#location-selector input {
+    color: #333 !important;
+}
+#location-selector .Select-menu-outer {
+    background: white !important;
+    border-color: #e0e0e0 !important;
+}
+#location-selector .VirtualizedSelectOption {
+    background: white !important;
+    color: #333 !important;
+}
+#location-selector .VirtualizedSelectOption:hover,
+#location-selector .VirtualizedSelectFocusedOption {
+    background: #f0f0f0 !important;
+    color: #333 !important;
+}
+#location-selector .Select-arrow-zone .Select-arrow {
+    border-color: #333 transparent transparent !important;
+}
 """
 
 # FIX 1: No forced dark-mode application in the inline script — theme is applied
@@ -663,7 +742,7 @@ def main():
                     html.Div(id="offset-display", style={"fontSize": "13px", "color": "#777"}),
                 ])
             ])
-        ], style={
+        ], className="controls-panel", style={
             "padding": "25px",
             "background": "white",
             "borderRadius": "12px",
