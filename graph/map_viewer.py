@@ -332,7 +332,6 @@ def main():
     app.layout = html.Div([
         # Dark mode toggle
         html.Div([
-            html.Span("☀️", style={"fontSize": "20px", "marginRight": "12px"}),
             html.Label([
                 dcc.Checklist(
                     id="dark-mode-toggle",
@@ -341,7 +340,6 @@ def main():
                     className="toggle-switch"
                 ),
             ], className="toggle-container"),
-            html.Span("🌙", style={"fontSize": "20px", "marginLeft": "12px"}),
         ], style={
             "position": "fixed",
             "top": "20px",
@@ -706,6 +704,36 @@ def main():
         
         return theme, style
     
+    # Add clientside callback to persist theme to localStorage
+    app.clientside_callback(
+        """
+        function(theme) {
+            if (theme) {
+                localStorage.setItem('theme', theme);
+            }
+            return window.dash_clientside.no_update;
+        }
+        """,
+        Output("theme-store", "data", allow_duplicate=True),
+        Input("theme-store", "data"),
+        prevent_initial_call=True
+    )
+    
+    # Load initial theme from localStorage
+    app.clientside_callback(
+        """
+        function() {
+            const savedTheme = localStorage.getItem('theme');
+            if (savedTheme === 'dark') {
+                return ['dark'];
+            }
+            return [];
+        }
+        """,
+        Output("dark-mode-toggle", "value"),
+        Input("dark-mode-toggle", "id"),
+    )
+    
     # Add CSS for spinner animation
     app.index_string = '''
     <!DOCTYPE html>
@@ -735,12 +763,6 @@ def main():
                     height: 28px;
                 }
                 
-                .toggle-switch input[type="checkbox"] {
-                    opacity: 0;
-                    width: 0;
-                    height: 0;
-                }
-                
                 .toggle-switch {
                     position: relative;
                     display: inline-block;
@@ -748,27 +770,50 @@ def main():
                     height: 28px;
                 }
                 
-                .toggle-switch::before {
-                    content: '';
+                /* Hide the default checkbox */
+                .toggle-switch input[type="checkbox"] {
                     position: absolute;
-                    width: 50px;
-                    height: 28px;
-                    background: #ccc;
-                    border-radius: 28px;
-                    transition: 0.3s;
+                    opacity: 0;
+                    cursor: pointer;
+                    height: 0;
+                    width: 0;
                 }
                 
-                .toggle-switch::after {
-                    content: '';
+                /* Create the slider background */
+                .toggle-switch label {
                     position: absolute;
-                    width: 24px;
-                    height: 24px;
-                    background: white;
-                    border-radius: 50%;
-                    top: 2px;
-                    left: 2px;
+                    cursor: pointer;
+                    top: 0;
+                    left: 0;
+                    right: 0;
+                    bottom: 0;
+                    background-color: #ccc;
                     transition: 0.3s;
+                    border-radius: 28px;
+                }
+                
+                /* Create the white circle */
+                .toggle-switch label:before {
+                    position: absolute;
+                    content: "";
+                    height: 24px;
+                    width: 24px;
+                    left: 2px;
+                    bottom: 2px;
+                    background-color: white;
+                    transition: 0.3s;
+                    border-radius: 50%;
                     box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+                }
+                
+                /* When checked, change background to purple */
+                .toggle-switch input:checked + label {
+                    background-color: #667eea;
+                }
+                
+                /* When checked, slide the circle to the right */
+                .toggle-switch input:checked + label:before {
+                    transform: translateX(22px);
                 }
             </style>
         </head>

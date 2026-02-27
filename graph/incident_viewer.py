@@ -225,7 +225,6 @@ app.title = "Incident Video Viewer"
 app.layout = html.Div(id="main-container", children=[
     # Dark mode toggle
     html.Div([
-        html.Span("☀️", style={"fontSize": "20px", "marginRight": "12px"}),
         html.Label([
             dcc.Checklist(
                 id="dark-mode-toggle",
@@ -234,7 +233,6 @@ app.layout = html.Div(id="main-container", children=[
                 className="toggle-switch"
             ),
         ], className="toggle-container"),
-        html.Span("🌙", style={"fontSize": "20px", "marginLeft": "12px"}),
     ], style={
         "position": "fixed",
         "top": "20px",
@@ -524,6 +522,37 @@ def toggle_theme(dark_mode):
         style = {"background": "#f5f7fa", "minHeight": "100vh", "padding": "20px"}
     
     return theme, style
+
+
+# Add clientside callback to persist theme to localStorage
+app.clientside_callback(
+    """
+    function(theme) {
+        if (theme) {
+            localStorage.setItem('theme', theme);
+        }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("theme-store", "data", allow_duplicate=True),
+    Input("theme-store", "data"),
+    prevent_initial_call=True
+)
+
+# Load initial theme from localStorage
+app.clientside_callback(
+    """
+    function() {
+        const savedTheme = localStorage.getItem('theme');
+        if (savedTheme === 'dark') {
+            return ['dark'];
+        }
+        return [];
+    }
+    """,
+    Output("dark-mode-toggle", "value"),
+    Input("dark-mode-toggle", "id"),
+)
 
 
 # =========================
