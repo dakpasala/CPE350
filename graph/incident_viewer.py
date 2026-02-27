@@ -8,20 +8,18 @@ Fetches incidents with associated videos and displays them.
 
 import os
 import requests
-from datetime import datetime, timedelta
-from pathlib import Path
+from datetime import datetime
 from dotenv import load_dotenv
 
 import dash
 from dash import Dash, dcc, html, Input, Output, State
 from dash.exceptions import PreventUpdate
-import dash_bootstrap_components as dbc
 
 load_dotenv()
 
 # =========================
 # Configuration
-# =========================
+# ========================= 
 
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 HOST = os.getenv("VIEWER_HOST", "127.0.0.1")
@@ -42,90 +40,50 @@ TIME_RANGES = {
 # =========================
 
 def get_recent_videos(limit=10, location=None):
-    """Fetch recent videos from API."""
     try:
         params = {"limit": limit}
         if location:
             params["location"] = location
-        
         response = requests.get(f"{API_BASE_URL}/videos", params=params, timeout=10)
-        
         if response.status_code == 200:
-            data = response.json()
-            return data.get("videos", [])
-        else:
-            print(f"⚠️ Failed to fetch videos: {response.status_code}")
-            return []
+            return response.json().get("videos", [])
+        return []
     except Exception as e:
         print(f"⚠️ Error fetching videos: {e}")
         return []
 
 
 def get_videos_by_timerange(minutes, location=None):
-    """Fetch videos from last N minutes."""
     try:
         params = {"minutes": minutes}
         if location:
             params["location"] = location
-        
         response = requests.get(f"{API_BASE_URL}/videos/timerange", params=params, timeout=10)
-        
         if response.status_code == 200:
-            data = response.json()
-            return data.get("videos", [])
-        else:
-            print(f"⚠️ Failed to fetch videos: {response.status_code}")
-            return []
+            return response.json().get("videos", [])
+        return []
     except Exception as e:
         print(f"⚠️ Error fetching videos: {e}")
         return []
 
 
-def get_recent_incidents(limit=50, location=None):
-    """Fetch recent incidents from API."""
-    try:
-        params = {"limit": limit}
-        if location:
-            params["location"] = location
-        
-        response = requests.get(f"{API_BASE_URL}/incidents/recent", params=params, timeout=10)
-        
-        if response.status_code == 200:
-            data = response.json()
-            return data.get("incidents", [])
-        else:
-            print(f"⚠️ Failed to fetch incidents: {response.status_code}")
-            return []
-    except Exception as e:
-        print(f"⚠️ Error fetching incidents: {e}")
-        return []
-
-
 def get_incidents_by_timerange(minutes, location=None):
-    """Fetch incidents from last N minutes."""
     try:
         params = {"minutes": minutes}
         if location:
             params["location"] = location
-        
         response = requests.get(f"{API_BASE_URL}/incidents/timerange", params=params, timeout=10)
-        
         if response.status_code == 200:
-            data = response.json()
-            return data.get("incidents", [])
-        else:
-            print(f"⚠️ Failed to fetch incidents: {response.status_code}")
-            return []
+            return response.json().get("incidents", [])
+        return []
     except Exception as e:
         print(f"⚠️ Error fetching incidents: {e}")
         return []
 
 
 def get_video_for_incident(incident_id):
-    """Fetch video associated with an incident."""
     try:
         response = requests.get(f"{API_BASE_URL}/videos/incident/{incident_id}", timeout=10)
-        
         if response.status_code == 200:
             data = response.json()
             if data.get("status") == "success":
@@ -141,7 +99,6 @@ def get_video_for_incident(incident_id):
 # =========================
 
 def format_timestamp(ts_str):
-    """Format timestamp for display."""
     try:
         if isinstance(ts_str, str):
             ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
@@ -152,214 +109,736 @@ def format_timestamp(ts_str):
         return str(ts_str)
 
 
+def severity_color(severity):
+    if severity >= 0.7:
+        return "#f5576c"
+    elif severity >= 0.4:
+        return "#ff9800"
+    return "#4CAF50"
+
+
 def build_video_card(video):
-    """Build a card for a single video."""
     video_id = video.get("_id")
     filename = video.get("filename", "Unknown")
     camera = video.get("camera", "Unknown")
     timestamp = format_timestamp(video.get("timestamp"))
     size_mb = video.get("size_bytes", 0) / 1024 / 1024
     incident_count = len(video.get("incident_ids", []))
-    
-    # Determine card color based on incidents
-    card_color = "danger" if incident_count > 0 else "secondary"
-    
-    return dbc.Card([
-        dbc.CardBody([
-            html.H5(f"📹 {filename}", className="card-title"),
-            html.P([
-                html.Strong("Camera: "), camera, html.Br(),
-                html.Strong("Time: "), timestamp, html.Br(),
-                html.Strong("Size: "), f"{size_mb:.2f} MB", html.Br(),
-                html.Strong("Incidents: "), 
-                html.Span(
-                    f"🚨 {incident_count}" if incident_count > 0 else "None",
-                    style={"color": "red" if incident_count > 0 else "green"}
-                ),
-            ]),
-            dbc.Button(
-                "▶️ Watch Video",
-                id={"type": "watch-btn", "index": video_id},
-                color="primary",
-                className="mt-2"
+
+    return html.Div([
+        html.Div([
+            html.Div("📹", style={"fontSize": "24px", "marginRight": "12px"}),
+            html.Div([
+                html.Div(filename, className="card-title", style={"fontWeight": "700", "fontSize": "15px", "color": "#333", "marginBottom": "2px"}),
+                html.Div(f"Camera: {camera}", className="card-meta", style={"fontSize": "13px", "color": "#666"}),
+            ], style={"flex": "1"}),
+            html.Div(
+                f"🚨 {incident_count}" if incident_count > 0 else "✓ Clean",
+                style={
+                    "fontSize": "13px", "fontWeight": "700",
+                    "color": "#f5576c" if incident_count > 0 else "#4CAF50",
+                    "padding": "4px 10px", "borderRadius": "20px",
+                    "background": "rgba(245,87,108,0.1)" if incident_count > 0 else "rgba(76,175,80,0.1)",
+                }
             ),
-        ])
-    ], color=card_color, outline=True, className="mb-3")
+        ], style={"display": "flex", "alignItems": "center", "marginBottom": "12px"}),
+        html.Div([
+            html.Span(timestamp, className="card-meta", style={"fontSize": "13px", "color": "#666", "marginRight": "16px"}),
+            html.Span(f"{size_mb:.2f} MB", className="card-meta", style={"fontSize": "13px", "color": "#666"}),
+        ], style={"marginBottom": "14px"}),
+        html.Button(
+            "▶ Watch Video",
+            id={"type": "watch-btn", "index": video_id},
+            n_clicks=0,
+            style={
+                "width": "100%", "padding": "10px", "fontSize": "14px", "fontWeight": "600",
+                "borderRadius": "8px", "border": "none",
+                "background": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+                "color": "white", "cursor": "pointer", "boxShadow": "0 4px 12px rgba(102,126,234,0.3)",
+            }
+        ),
+    ], className="video-card", style={
+        "background": "white", "border": "2px solid #eee", "borderRadius": "12px",
+        "padding": "16px", "boxShadow": "0 4px 16px rgba(0,0,0,0.08)",
+        "transition": "transform 0.2s ease, box-shadow 0.2s ease",
+    })
 
 
 def build_incident_card(incident):
-    """Build a card for a single incident."""
     incident_id = str(incident.get("_id"))
     incident_type = incident.get("incident_type", "Unknown")
     severity = incident.get("severity", 0)
     timestamp = format_timestamp(incident.get("timestamp"))
     vehicles = incident.get("vehicles", [])
     location = incident.get("location", "Unknown")
-    
-    return dbc.Card([
-        dbc.CardBody([
-            html.H5(f"🚨 {incident_type.upper()}", className="card-title"),
-            html.P([
-                html.Strong("Severity: "), f"{severity:.2f}", html.Br(),
-                html.Strong("Time: "), timestamp, html.Br(),
-                html.Strong("Location: "), location, html.Br(),
-                html.Strong("Vehicles: "), f"{len(vehicles)}", html.Br(),
-            ]),
-            dbc.Button(
-                "🎥 Watch Video",
-                id={"type": "incident-video-btn", "index": incident_id},
-                color="danger",
-                className="mt-2"
+    sev_color = severity_color(severity)
+    border = "#f5576c" if severity >= 0.7 else ("#ff9800" if severity >= 0.4 else "#eee")
+
+    return html.Div([
+        html.Div([
+            html.Div("🚨", style={"fontSize": "24px", "marginRight": "12px"}),
+            html.Div([
+                html.Div(incident_type.upper(), className="card-title", style={"fontWeight": "700", "fontSize": "15px", "color": "#333", "marginBottom": "2px"}),
+                html.Div(location, className="card-meta", style={"fontSize": "13px", "color": "#666"}),
+            ], style={"flex": "1"}),
+            html.Div(f"Sev {severity:.2f}", style={
+                "fontSize": "13px", "fontWeight": "700", "color": sev_color,
+                "padding": "4px 10px", "borderRadius": "20px", "background": "rgba(245,87,108,0.1)",
+            }),
+        ], style={"display": "flex", "alignItems": "center", "marginBottom": "12px"}),
+        html.Div([
+            html.Span(timestamp, className="card-meta", style={"fontSize": "13px", "color": "#666", "marginRight": "16px"}),
+            html.Span(f"{len(vehicles)} vehicles", className="card-meta", style={"fontSize": "13px", "color": "#666"}),
+        ], style={"marginBottom": "14px"}),
+        html.Button(
+            "🎥 Watch Video",
+            id={"type": "incident-video-btn", "index": incident_id},
+            n_clicks=0,
+            style={
+                "width": "100%", "padding": "10px", "fontSize": "14px", "fontWeight": "600",
+                "borderRadius": "8px", "border": "none",
+                "background": "linear-gradient(135deg, #f093fb 0%, #f5576c 100%)",
+                "color": "white", "cursor": "pointer", "boxShadow": "0 4px 12px rgba(245,87,108,0.3)",
+            }
+        ),
+    ], className="incident-card", style={
+        "background": "white", "border": f"2px solid {border}", "borderRadius": "12px",
+        "padding": "16px", "boxShadow": "0 4px 16px rgba(0,0,0,0.08)", "transition": "transform 0.2s ease",
+    })
+
+
+# =========================
+# Shared theme helpers
+# =========================
+
+TOGGLE_CSS = """
+body { margin: 0; padding: 0; overflow-x: hidden; }
+
+.theme-toggle-btn {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 18px;
+    border-radius: 50px;
+    border: 2px solid rgba(0,0,0,0.12);
+    background: #ffffff;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    color: #333;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+    transition: all 0.25s ease;
+    user-select: none;
+    white-space: nowrap;
+}
+.theme-toggle-btn:hover {
+    box-shadow: 0 4px 16px rgba(0,0,0,0.18);
+    transform: translateY(-1px);
+}
+.theme-toggle-btn .toggle-track {
+    width: 38px;
+    height: 22px;
+    border-radius: 11px;
+    background: #ccc;
+    position: relative;
+    transition: background 0.25s ease;
+    flex-shrink: 0;
+}
+.theme-toggle-btn .toggle-track.active {
+    background: #667eea;
+}
+.theme-toggle-btn .toggle-thumb {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: white;
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    transition: transform 0.25s ease;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+}
+.theme-toggle-btn .toggle-track.active .toggle-thumb {
+    transform: translateX(16px);
+}
+.theme-toggle-btn.dark-mode {
+    background: #2d2d2d;
+    border-color: rgba(255,255,255,0.15);
+    color: #e0e0e0;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+}
+
+/* Tab styles */
+.tab-btn {
+    padding: 12px 24px;
+    border: none;
+    border-bottom: 3px solid transparent;
+    background: transparent;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    color: #666;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+.tab-btn.active {
+    border-bottom-color: #667eea;
+    color: #667eea;
+}
+.tab-btn:hover {
+    color: #667eea;
+}
+
+/* Dark mode overrides via data-theme attribute */
+[data-theme="dark"] #tab-bar {
+    background: #2d2d2d !important;
+    border-bottom: 2px solid #404040 !important;
+}
+[data-theme="dark"] #tab-content {
+    background: #2d2d2d !important;
+    color: #e0e0e0;
+}
+[data-theme="dark"] .tab-btn {
+    color: #aaa;
+}
+[data-theme="dark"] .tab-btn.active {
+    color: #667eea;
+}
+[data-theme="dark"] .tab-section-title {
+    color: #e0e0e0 !important;
+}
+[data-theme="dark"] .tab-section-subtitle {
+    color: #aaa !important;
+}
+[data-theme="dark"] .tab-label {
+    color: #aaa !important;
+}
+[data-theme="dark"] .search-text-input {
+    background: #1a1a1a !important;
+    color: #e0e0e0 !important;
+    border-color: #404040 !important;
+}
+[data-theme="dark"] .empty-state {
+    color: #aaa !important;
+    border-color: #404040 !important;
+}
+[data-theme="dark"] .video-card, [data-theme="dark"] .incident-card {
+    background: #2d2d2d !important;
+    border-color: #404040 !important;
+}
+[data-theme="dark"] .card-title { color: #e0e0e0 !important; }
+[data-theme="dark"] .card-meta { color: #aaa !important; }
+
+/* Video modal */
+.video-modal-overlay {
+    display: none;
+    position: fixed;
+    top: 0; left: 0;
+    width: 100vw; height: 100vh;
+    background: rgba(0,0,0,0.75);
+    z-index: 9999;
+    align-items: center;
+    justify-content: center;
+    backdrop-filter: blur(4px);
+}
+.video-modal-overlay.open {
+    display: flex;
+}
+
+/* Search inputs */
+.search-input {
+    width: 100%;
+    padding: 10px 14px;
+    border-radius: 8px;
+    border: 2px solid #e0e0e0;
+    font-size: 14px;
+    font-family: inherit;
+    transition: border-color 0.2s;
+    box-sizing: border-box;
+}
+.search-input:focus {
+    outline: none;
+    border-color: #667eea;
+}
+
+.search-btn {
+    padding: 10px 24px;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-family: inherit;
+}
+.search-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+"""
+
+TOGGLE_JS = """
+window.DASHBOARD_THEME_KEY = 'dashboard_theme';
+(function() {
+    var saved = localStorage.getItem(window.DASHBOARD_THEME_KEY);
+    if (saved) document.documentElement.setAttribute('data-theme', saved);
+})();
+"""
+
+INDEX_STRING = '''
+<!DOCTYPE html>
+<html>
+    <head>
+        {%metas%}
+        <title>{%title%}</title>
+        {%favicon%}
+        {%css%}
+        <style>''' + TOGGLE_CSS + '''</style>
+        <script>''' + TOGGLE_JS + '''</script>
+    </head>
+    <body>
+        {%app_entry%}
+        <footer>
+            {%config%}
+            {%scripts%}
+            {%renderer%}
+        </footer>
+    </body>
+</html>
+'''
+
+
+def make_theme_toggle(toggle_id="theme-toggle"):
+    return html.Div(
+        id=f"{toggle_id}-wrapper",
+        children=[
+            dcc.Checklist(
+                id=toggle_id,
+                options=[{"label": "", "value": "dark"}],
+                value=[],
+                style={"display": "none"},
             ),
-        ])
-    ], color="danger", outline=True, className="mb-3")
+            html.Button(
+                id=f"{toggle_id}-btn",
+                children=[
+                    html.Div([
+                        html.Div(className="toggle-thumb"),
+                    ], id=f"{toggle_id}-track", className="toggle-track"),
+                    html.Span("Theme: Light", id=f"{toggle_id}-label"),
+                ],
+                className="theme-toggle-btn",
+                n_clicks=0,
+            ),
+        ],
+        style={"position": "fixed", "top": "20px", "right": "20px", "zIndex": 10000}
+    )
 
 
 # =========================
 # Dash App
 # =========================
 
-app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
+app = Dash(__name__)
 app.title = "Incident Video Viewer"
+app.index_string = INDEX_STRING
 
-app.layout = html.Div(id="main-container", children=[
-    # Dark mode toggle
-    html.Div([
-        html.Label([
-            dcc.Checklist(
-                id="dark-mode-toggle",
-                options=[{"label": "", "value": "dark"}],
-                value=[],
-                className="toggle-switch"
-            ),
-        ], className="toggle-container"),
-    ], style={
-        "position": "fixed",
-        "top": "20px",
-        "right": "20px",
-        "zIndex": 10000,
-        "display": "flex",
-        "alignItems": "center",
-        "padding": "8px 16px",
-        "borderRadius": "30px",
-        "backgroundColor": "rgba(255, 255, 255, 0.9)",
-        "backdropFilter": "blur(10px)",
-        "boxShadow": "0 4px 12px rgba(0,0,0,0.15)",
-    }),
-    
-    dbc.Container([
-    html.H1("🚨 Traffic Incident Video Viewer", className="mt-4 mb-4"),
-    
-    dbc.Row([
-        dbc.Col([
-            html.A(
-                dbc.Button("← Back to Live Feed", color="secondary", className="mb-3"),
-                href="http://127.0.0.1:8050"
-            ),
-        ]),
-    ]),
-    
-    # Tabs for different views
-    dbc.Tabs([
-        # Tab 1: Incidents by Time Range with Videos
-        dbc.Tab([
+
+def make_layout():
+    return html.Div(id="main-container", children=[
+        make_theme_toggle("theme-toggle"),
+
+        # ---- Header (matches other pages) ----
+        html.Div([
             html.Div([
-                html.H3("Incidents by Time Range", className="mt-4"),
-                html.P("Browse incidents from a specific time period and watch videos"),
-                
-                dbc.Row([
-                    dbc.Col([
-                        dbc.Label("Time Range:"),
-                        dbc.Select(
-                            id="incident-timerange-select",
-                            options=[{"label": k, "value": v} for k, v in TIME_RANGES.items()],
-                            value=1440,  # Default: Last Day
-                        ),
-                    ], width=4),
-                    dbc.Col([
-                        dbc.Label("Location:"),
-                        dbc.Input(
-                            id="incident-location-input",
-                            placeholder="e.g., patterson (optional)",
-                            type="text"
-                        ),
-                    ], width=4),
-                    dbc.Col([
-                        html.Br(),
-                        dbc.Button("🔍 Search Incidents", id="search-incidents-btn", color="danger"),
-                    ], width=4),
-                ], className="mb-4"),
-                
-                html.Div(id="incidents-container"),
-            ])
-        ], label="🚨 Incidents by Time"),
-        
-        # Tab 2: Browse All Videos
-        dbc.Tab([
+                html.H2("TRAFFIC INCIDENT VIEWER", style={
+                    "color": "white",
+                    "margin": "0",
+                    "fontSize": "28px",
+                    "fontWeight": "bold",
+                    "textShadow": "2px 2px 4px rgba(0,0,0,0.3)"
+                }),
+                html.P("Browse and review recorded incident footage", style={
+                    "color": "rgba(255,255,255,0.9)",
+                    "margin": "5px 0 0 0",
+                    "fontSize": "14px"
+                }),
+            ], style={"flex": "1"}),
+
+            # Nav buttons
             html.Div([
-                html.H3("Browse All Videos", className="mt-4"),
-                
-                dbc.Row([
-                    dbc.Col([
-                        dbc.Label("Time Range:"),
-                        dbc.Select(
-                            id="timerange-select",
-                            options=[{"label": k, "value": v} for k, v in TIME_RANGES.items()],
-                            value=1440,  # Default: Last Day
-                        ),
-                    ], width=4),
-                    dbc.Col([
-                        dbc.Label("Location:"),
-                        dbc.Input(
-                            id="location-input",
-                            placeholder="e.g., patterson (optional)",
-                            type="text"
-                        ),
-                    ], width=4),
-                    dbc.Col([
-                        html.Br(),
-                        dbc.Button("🔍 Search Videos", id="search-videos-btn", color="primary"),
-                    ], width=4),
-                ], className="mb-4"),
-                
-                html.Div(id="videos-container"),
-            ])
-        ], label="📹 All Videos"),
-        
-        # Tab 3: Latest Video (for quick access)
-        dbc.Tab([
+                html.A(
+                    html.Button("← Home", style={
+                        "fontSize": "15px",
+                        "padding": "10px 20px",
+                        "background": "white",
+                        "color": "#667eea",
+                        "border": "2px solid white",
+                        "borderRadius": "8px",
+                        "cursor": "pointer",
+                        "fontWeight": "600",
+                        "marginRight": "10px",
+                    }),
+                    href="http://127.0.0.1:8050",
+                ),
+                html.A(
+                    html.Button("Live Feed", style={
+                        "fontSize": "15px",
+                        "padding": "10px 20px",
+                        "background": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+                        "color": "white",
+                        "border": "none",
+                        "borderRadius": "8px",
+                        "cursor": "pointer",
+                        "fontWeight": "600",
+                        "marginRight": "10px",
+                        "boxShadow": "0 4px 15px rgba(0,0,0,0.2)",
+                    }),
+                    href="http://127.0.0.1:8053",
+                    target="_blank",
+                ),
+                html.A(
+                    html.Button("Traffic Heatmap", style={
+                        "fontSize": "15px",
+                        "padding": "10px 20px",
+                        "background": "linear-gradient(135deg, #f093fb 0%, #f5576c 100%)",
+                        "color": "white",
+                        "border": "none",
+                        "borderRadius": "8px",
+                        "cursor": "pointer",
+                        "fontWeight": "600",
+                        "boxShadow": "0 4px 15px rgba(0,0,0,0.2)",
+                    }),
+                    href="http://127.0.0.1:8052",
+                    target="_blank",
+                ),
+            ], style={"display": "flex", "alignItems": "center"}),
+        ], style={
+            "display": "flex",
+            "alignItems": "center",
+            "justifyContent": "space-between",
+            "padding": "20px 30px",
+            "background": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+            "borderRadius": "12px",
+            "marginBottom": "24px",
+            "boxShadow": "0 4px 20px rgba(0,0,0,0.1)"
+        }),
+
+        # ---- Tab bar ----
+        html.Div([
             html.Div([
-                html.H3("Latest Captured Video", className="mt-4"),
-                html.P("Most recent video from the camera"),
-                
-                dbc.Button("🔄 Refresh", id="refresh-latest-btn", color="primary", className="mb-3"),
-                
-                html.Div(id="latest-video-container"),
-            ])
-        ], label="🎬 Latest Video"),
-    ]),
-    
-    # Video Player Modal
-    dbc.Modal([
-        dbc.ModalHeader(dbc.ModalTitle("Video Player")),
-        dbc.ModalBody([
-            html.Div(id="video-player-content"),
-        ]),
-        dbc.ModalFooter(
-            dbc.Button("Close", id="close-video-modal", className="ml-auto")
+                html.Button("🚨 Incidents by Time", id="tab-incidents-btn", className="tab-btn active", n_clicks=0),
+                html.Button("📹 All Videos", id="tab-videos-btn", className="tab-btn", n_clicks=0),
+                html.Button("🎬 Latest Video", id="tab-latest-btn", className="tab-btn", n_clicks=0),
+            ], style={"display": "flex", "gap": "4px"}),
+        ], id="tab-bar", style={
+            "background": "white",
+            "borderRadius": "12px 12px 0 0",
+            "padding": "0 20px",
+            "borderBottom": "2px solid #eee",
+            "boxShadow": "0 2px 8px rgba(0,0,0,0.05)",
+        }),
+
+        # ---- Tab content panels ----
+        html.Div(id="tab-content", style={
+            "background": "white",
+            "borderRadius": "0 0 12px 12px",
+            "padding": "24px",
+            "boxShadow": "0 4px 20px rgba(0,0,0,0.08)",
+            "minHeight": "400px",
+            "transition": "background 0.25s ease",
+        }),
+
+        # ---- Video Modal ----
+        html.Div(
+            id="video-modal",
+            className="video-modal-overlay",
+            children=[
+                html.Div([
+                    # Modal header
+                    html.Div([
+                        html.H3(id="video-modal-title", style={"margin": "0", "color": "white", "fontSize": "20px"}),
+                        html.Button("✕", id="close-video-modal", n_clicks=0, style={
+                            "background": "rgba(255,255,255,0.2)",
+                            "border": "none",
+                            "color": "white",
+                            "fontSize": "18px",
+                            "cursor": "pointer",
+                            "borderRadius": "6px",
+                            "padding": "4px 10px",
+                        }),
+                    ], style={
+                        "display": "flex",
+                        "justifyContent": "space-between",
+                        "alignItems": "center",
+                        "padding": "20px 24px",
+                        "background": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+                    }),
+                    # Modal body
+                    html.Div(id="video-player-content", style={"padding": "24px"}),
+                ], style={
+                    "background": "white",
+                    "borderRadius": "16px",
+                    "width": "700px",
+                    "maxWidth": "90vw",
+                    "boxShadow": "0 20px 60px rgba(0,0,0,0.4)",
+                    "overflow": "hidden",
+                }),
+            ],
         ),
-    ], id="video-modal", size="xl", is_open=False),
-    
-], fluid=True),
-    
-    # Theme store
-    dcc.Store(id="theme-store", data="light"),
-    
-], style={"background": "#f5f7fa", "minHeight": "100vh", "padding": "20px"})
+
+        # Stores
+        dcc.Store(id="theme-store", data="light"),
+        dcc.Store(id="active-tab", data="incidents"),
+        dcc.Store(id="modal-open", data=False),
+
+        html.Div(
+            f"Incident Video Viewer • http://{HOST}:{PORT}",
+            style={"textAlign": "center", "color": "#999", "fontSize": "13px", "marginTop": "20px"}
+        ),
+    ], style={
+        "padding": "30px",
+        "background": "#f5f7fa",
+        "minHeight": "100vh",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
+    })
+
+
+app.layout = make_layout
 
 
 # =========================
-# Callbacks
+# Theme callbacks
+# =========================
+
+app.clientside_callback(
+    """
+    function(n_clicks, current_value) {
+        if (n_clicks === undefined || n_clicks === null) return window.dash_clientside.no_update;
+        var isDark = current_value && current_value.includes('dark');
+        return isDark ? [] : ['dark'];
+    }
+    """,
+    Output("theme-toggle", "value"),
+    Input("theme-toggle-btn", "n_clicks"),
+    State("theme-toggle", "value"),
+    prevent_initial_call=True,
+)
+
+app.clientside_callback(
+    """
+    function(id) {
+        var saved = localStorage.getItem(window.DASHBOARD_THEME_KEY || 'dashboard_theme');
+        if (saved === 'dark') return ['dark'];
+        return [];
+    }
+    """,
+    Output("theme-toggle", "value", allow_duplicate=True),
+    Input("theme-toggle", "id"),
+    prevent_initial_call='initial_duplicate',
+)
+
+app.clientside_callback(
+    """
+    function(value) {
+        var isDark = value && value.includes('dark');
+        var theme = isDark ? 'dark' : 'light';
+        localStorage.setItem(window.DASHBOARD_THEME_KEY || 'dashboard_theme', theme);
+        document.documentElement.setAttribute('data-theme', theme);
+        
+        // Update toggle button appearance
+        var btn = document.getElementById('theme-toggle-btn');
+        var track = document.getElementById('theme-toggle-track');
+        var label = document.getElementById('theme-toggle-label');
+        if (btn && track && label) {
+            if (isDark) {
+                track.classList.add('active'); label.textContent = 'Theme: Dark'; btn.classList.add('dark-mode');
+            } else {
+                track.classList.remove('active'); label.textContent = 'Theme: Light'; btn.classList.remove('dark-mode');
+            }
+        }
+        
+        // Immediately update tab-bar and tab-content background (avoids server round-trip flash)
+        var tabBar = document.getElementById('tab-bar');
+        var tabContent = document.getElementById('tab-content');
+        if (tabBar) {
+            tabBar.style.background = isDark ? '#2d2d2d' : 'white';
+            tabBar.style.borderBottom = isDark ? '2px solid #404040' : '2px solid #eee';
+        }
+        if (tabContent) {
+            tabContent.style.background = isDark ? '#2d2d2d' : 'white';
+        }
+        
+        return theme;
+    }
+    """,
+    Output("theme-store", "data"),
+    Input("theme-toggle", "value"),
+)
+
+
+app.clientside_callback(
+    """
+    function(theme) {
+        var isDark = theme === 'dark';
+        return [
+            {
+                padding: '30px',
+                background: isDark ? '#1a1a1a' : '#f5f7fa',
+                minHeight: '100vh',
+                fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
+                color: isDark ? '#e0e0e0' : '#333',
+            },
+            {
+                background: isDark ? '#2d2d2d' : 'white',
+                borderRadius: '12px 12px 0 0',
+                padding: '0 20px',
+                borderBottom: isDark ? '2px solid #404040' : '2px solid #eee',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.05)',
+            }
+        ];
+    }
+    """,
+    Output("main-container", "style"),
+    Output("tab-bar", "style"),
+    Input("theme-store", "data"),
+)
+
+
+# =========================
+# Tab switching
+# =========================
+
+app.clientside_callback(
+    """
+    function(inc_clicks, vid_clicks, lat_clicks, current_tab) {
+        var ctx = window.dash_clientside.callback_context;
+        if (!ctx.triggered || ctx.triggered.length === 0) {
+            return [
+                current_tab,
+                current_tab === 'incidents' ? 'tab-btn active' : 'tab-btn',
+                current_tab === 'videos' ? 'tab-btn active' : 'tab-btn',
+                current_tab === 'latest' ? 'tab-btn active' : 'tab-btn',
+            ];
+        }
+        var trigger = ctx.triggered[0].prop_id;
+        var tab = current_tab;
+        if (trigger.includes('tab-incidents-btn')) tab = 'incidents';
+        else if (trigger.includes('tab-videos-btn')) tab = 'videos';
+        else if (trigger.includes('tab-latest-btn')) tab = 'latest';
+        
+        return [
+            tab,
+            tab === 'incidents' ? 'tab-btn active' : 'tab-btn',
+            tab === 'videos' ? 'tab-btn active' : 'tab-btn',
+            tab === 'latest' ? 'tab-btn active' : 'tab-btn',
+        ];
+    }
+    """,
+    Output("active-tab", "data"),
+    Output("tab-incidents-btn", "className"),
+    Output("tab-videos-btn", "className"),
+    Output("tab-latest-btn", "className"),
+    Input("tab-incidents-btn", "n_clicks"),
+    Input("tab-videos-btn", "n_clicks"),
+    Input("tab-latest-btn", "n_clicks"),
+    State("active-tab", "data"),
+    prevent_initial_call=False,
+)
+
+
+@app.callback(
+    Output("tab-content", "children"),
+    Input("active-tab", "data"),
+)
+def render_tab_content(tab):
+    """Render tab content - theme is handled purely via CSS data-theme attribute."""
+
+    LABEL_STYLE = {"fontSize": "13px", "fontWeight": "600", "marginBottom": "6px", "display": "block", "className": "tab-label"}
+    INPUT_STYLE = {
+        "width": "100%", "padding": "10px 14px", "borderRadius": "8px",
+        "border": "2px solid #e0e0e0", "fontSize": "14px", "fontFamily": "inherit",
+        "background": "white", "color": "#333", "boxSizing": "border-box",
+    }
+
+    if tab == "incidents" or tab is None:
+        return html.Div([
+            html.H3("Incidents by Time Range", className="tab-section-title", style={"margin": "0 0 6px 0", "fontSize": "22px", "fontWeight": "700", "color": "#333"}),
+            html.P("Browse incidents from a specific time period and watch their videos", className="tab-section-subtitle", style={"color": "#666", "marginBottom": "24px", "marginTop": "4px"}),
+            html.Div([
+                html.Div([
+                    html.Label("Time Range", className="tab-label", style={"fontSize": "13px", "fontWeight": "600", "marginBottom": "6px", "display": "block", "color": "#555"}),
+                    dcc.Dropdown(
+                        id="incident-timerange-select",
+                        options=[{"label": k, "value": v} for k, v in TIME_RANGES.items()],
+                        value=1440, clearable=False, style={"fontSize": "14px"},
+                    ),
+                ], style={"flex": "1", "minWidth": "160px"}),
+                html.Div([
+                    html.Label("Location (optional)", className="tab-label", style={"fontSize": "13px", "fontWeight": "600", "marginBottom": "6px", "display": "block", "color": "#555"}),
+                    dcc.Input(id="incident-location-input", placeholder="e.g., patterson", type="text",
+                        debounce=False, className="search-text-input", style=INPUT_STYLE),
+                ], style={"flex": "1", "minWidth": "160px"}),
+                html.Div([
+                    html.Label("\u00a0", style={"fontSize": "13px", "marginBottom": "6px", "display": "block"}),
+                    html.Button("Search Incidents", id="search-incidents-btn", n_clicks=0, style={
+                        "width": "100%", "padding": "10px 20px", "fontSize": "14px", "fontWeight": "700",
+                        "borderRadius": "8px", "border": "none",
+                        "background": "linear-gradient(135deg, #f093fb 0%, #f5576c 100%)",
+                        "color": "white", "cursor": "pointer", "boxShadow": "0 4px 12px rgba(245,87,108,0.3)",
+                    }),
+                ], style={"minWidth": "160px"}),
+            ], style={"display": "flex", "gap": "16px", "marginBottom": "28px", "flexWrap": "wrap", "alignItems": "flex-end"}),
+            html.Div(id="incidents-container"),
+        ])
+
+    elif tab == "videos":
+        return html.Div([
+            html.H3("Browse All Videos", className="tab-section-title", style={"margin": "0 0 6px 0", "fontSize": "22px", "fontWeight": "700", "color": "#333"}),
+            html.P("Search all recorded footage by time range and location", className="tab-section-subtitle", style={"color": "#666", "marginBottom": "24px", "marginTop": "4px"}),
+            html.Div([
+                html.Div([
+                    html.Label("Time Range", className="tab-label", style={"fontSize": "13px", "fontWeight": "600", "marginBottom": "6px", "display": "block", "color": "#555"}),
+                    dcc.Dropdown(id="timerange-select",
+                        options=[{"label": k, "value": v} for k, v in TIME_RANGES.items()],
+                        value=1440, clearable=False, style={"fontSize": "14px"},
+                    ),
+                ], style={"flex": "1", "minWidth": "160px"}),
+                html.Div([
+                    html.Label("Location (optional)", className="tab-label", style={"fontSize": "13px", "fontWeight": "600", "marginBottom": "6px", "display": "block", "color": "#555"}),
+                    dcc.Input(id="location-input", placeholder="e.g., patterson", type="text",
+                        debounce=False, className="search-text-input", style=INPUT_STYLE),
+                ], style={"flex": "1", "minWidth": "160px"}),
+                html.Div([
+                    html.Label("\u00a0", style={"fontSize": "13px", "marginBottom": "6px", "display": "block"}),
+                    html.Button("Search Videos", id="search-videos-btn", n_clicks=0, style={
+                        "width": "100%", "padding": "10px 20px", "fontSize": "14px", "fontWeight": "700",
+                        "borderRadius": "8px", "border": "none",
+                        "background": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+                        "color": "white", "cursor": "pointer", "boxShadow": "0 4px 12px rgba(102,126,234,0.3)",
+                    }),
+                ], style={"minWidth": "160px"}),
+            ], style={"display": "flex", "gap": "16px", "marginBottom": "28px", "flexWrap": "wrap", "alignItems": "flex-end"}),
+            html.Div(id="videos-container"),
+        ])
+
+    else:  # latest
+        return html.Div([
+            html.H3("Latest Captured Video", className="tab-section-title", style={"margin": "0 0 6px 0", "fontSize": "22px", "fontWeight": "700", "color": "#333"}),
+            html.P("Most recent recording from the camera system", className="tab-section-subtitle", style={"color": "#666", "marginBottom": "24px", "marginTop": "4px"}),
+            html.Button("↻ Refresh", id="refresh-latest-btn", n_clicks=0, style={
+                "padding": "10px 24px", "fontSize": "14px", "fontWeight": "700",
+                "borderRadius": "8px", "border": "none",
+                "background": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+                "color": "white", "cursor": "pointer", "marginBottom": "24px",
+                "boxShadow": "0 4px 12px rgba(102,126,234,0.3)",
+            }),
+            html.Div(id="latest-video-container"),
+        ])
+
+
+# =========================
+# Search callbacks
 # =========================
 
 @app.callback(
@@ -370,18 +849,22 @@ app.layout = html.Div(id="main-container", children=[
     prevent_initial_call=False,
 )
 def search_incidents(n_clicks, minutes, location):
-    """Search and display incidents by time range."""
     location = location.strip() if location else None
     incidents = get_incidents_by_timerange(minutes, location)
-    
+
     if not incidents:
-        return dbc.Alert("No incidents found for this time range", color="info")
-    
+        return html.Div("No incidents found for this time range.", className="empty-state", style={
+            "padding": "40px", "textAlign": "center", "color": "#999",
+            "fontSize": "16px", "borderRadius": "12px", "border": "2px dashed #ddd",
+        })
+
     cards = [build_incident_card(inc) for inc in incidents]
-    
     return html.Div([
-        html.P(f"Found {len(incidents)} incidents in the last {minutes} minutes", style={"fontSize": "18px", "fontWeight": "bold"}),
-        dbc.Row([dbc.Col(card, width=4) for card in cards]),
+        html.Div(
+            f"Found {len(incidents)} incidents in the last {minutes} minutes",
+            style={"fontWeight": "700", "fontSize": "16px", "marginBottom": "20px", "color": "#f5576c"}
+        ),
+        html.Div(cards, style={"display": "grid", "gridTemplateColumns": "repeat(auto-fill, minmax(280px, 1fr))", "gap": "16px"}),
     ])
 
 
@@ -393,18 +876,22 @@ def search_incidents(n_clicks, minutes, location):
     prevent_initial_call=False,
 )
 def search_videos(n_clicks, minutes, location):
-    """Search and display videos by time range."""
     location = location.strip() if location else None
     videos = get_videos_by_timerange(minutes, location)
-    
+
     if not videos:
-        return dbc.Alert("No videos found for this time range", color="info")
-    
-    cards = [build_video_card(video) for video in videos]
-    
+        return html.Div("No videos found for this time range.", className="empty-state", style={
+            "padding": "40px", "textAlign": "center", "color": "#999",
+            "fontSize": "16px", "borderRadius": "12px", "border": "2px dashed #ddd",
+        })
+
+    cards = [build_video_card(v) for v in videos]
     return html.Div([
-        html.P(f"Found {len(videos)} videos"),
-        dbc.Row([dbc.Col(card, width=4) for card in cards]),
+        html.Div(
+            f"Found {len(videos)} videos",
+            style={"fontWeight": "700", "fontSize": "16px", "marginBottom": "20px", "color": "#667eea"}
+        ),
+        html.Div(cards, style={"display": "grid", "gridTemplateColumns": "repeat(auto-fill, minmax(280px, 1fr))", "gap": "16px"}),
     ])
 
 
@@ -414,145 +901,89 @@ def search_videos(n_clicks, minutes, location):
     prevent_initial_call=False,
 )
 def load_latest_video(n_clicks):
-    """Load the most recent video."""
     videos = get_recent_videos(limit=1)
-    
     if not videos:
-        return dbc.Alert("No videos found", color="warning")
-    
+        return html.Div("No videos found.", style={"padding": "40px", "textAlign": "center", "color": "#999", "fontSize": "16px"})
+
     video = videos[0]
     video_id = video.get("_id")
-    
     return html.Div([
-        build_video_card(video),
-        html.Hr(),
-        html.H5("Preview:"),
-        html.Video(
-            src=f"{API_BASE_URL}/videos/{video_id}",
-            controls=True,
-            style={"width": "100%", "maxWidth": "800px"}
-        ),
+        html.Div(style={"maxWidth": "640px"}, children=[
+            build_video_card(video),
+            html.Div(style={"marginTop": "20px"}),
+            html.Video(src=f"{API_BASE_URL}/videos/{video_id}", controls=True,
+                style={"width": "100%", "borderRadius": "10px", "boxShadow": "0 4px 20px rgba(0,0,0,0.15)"}),
+        ])
     ])
 
 
+# =========================
+# Video modal callbacks
+# =========================
+
 @app.callback(
-    Output("video-modal", "is_open"),
+    Output("video-modal", "className"),
     Output("video-player-content", "children"),
+    Output("video-modal-title", "children"),
     Input({"type": "watch-btn", "index": dash.ALL}, "n_clicks"),
     Input({"type": "incident-video-btn", "index": dash.ALL}, "n_clicks"),
     Input("close-video-modal", "n_clicks"),
-    State("video-modal", "is_open"),
+    State("video-modal", "className"),
     prevent_initial_call=True,
 )
-def toggle_video_modal(watch_clicks, incident_clicks, close_click, is_open):
-    """Open/close video player modal."""
+def toggle_video_modal(watch_clicks, incident_clicks, close_click, current_class):
     ctx = dash.callback_context
-    
+
     if not ctx.triggered:
-        return False, ""
-    
+        return "video-modal-overlay", "", "Video Player"
+
     trigger = ctx.triggered[0]
     prop_id = trigger["prop_id"]
-    
-    # Close button
+
     if "close-video-modal" in prop_id:
-        return False, ""
-    
-    # Watch button (direct video)
+        return "video-modal-overlay", "", "Video Player"
+
     if "watch-btn" in prop_id:
         import json
         button_id = json.loads(prop_id.split(".")[0])
         video_id = button_id["index"]
-        
-        video_player = html.Video(
+        player = html.Video(
             src=f"{API_BASE_URL}/videos/{video_id}",
             controls=True,
             autoPlay=True,
-            style={"width": "100%"}
+            style={"width": "100%", "borderRadius": "8px"}
         )
-        
-        return True, video_player
-    
-    # Incident video button (fetch video for incident)
+        return "video-modal-overlay open", player, "📹 Video Playback"
+
     if "incident-video-btn" in prop_id:
         import json
         button_id = json.loads(prop_id.split(".")[0])
         incident_id = button_id["index"]
-        
         video_info = get_video_for_incident(incident_id)
-        
+
         if video_info:
             video_id = video_info.get("_id")
-            
-            video_player = html.Div([
-                html.H5(f"Video: {video_info.get('filename')}"),
-                html.P(f"Camera: {video_info.get('camera')} | Time: {format_timestamp(video_info.get('timestamp'))}"),
+            filename = video_info.get("filename", "")
+            player = html.Div([
+                html.P(
+                    f"Camera: {video_info.get('camera')} • {format_timestamp(video_info.get('timestamp'))}",
+                    style={"color": "#666", "fontSize": "14px", "marginBottom": "12px"}
+                ),
                 html.Video(
                     src=f"{API_BASE_URL}/videos/{video_id}",
                     controls=True,
                     autoPlay=True,
-                    style={"width": "100%"}
+                    style={"width": "100%", "borderRadius": "8px"}
                 ),
             ])
-            
-            return True, video_player
+            return "video-modal-overlay open", player, f"🚨 {filename}"
         else:
-            return True, dbc.Alert("No video found for this incident", color="warning")
-    
-    return False, ""
+            return "video-modal-overlay open", html.Div(
+                "No video found for this incident.",
+                style={"color": "#f5576c", "padding": "20px", "textAlign": "center"}
+            ), "No Video Found"
 
-
-# =========================
-# Theme Toggle Callback
-# =========================
-
-@app.callback(
-    Output("theme-store", "data"),
-    Output("main-container", "style"),
-    Input("dark-mode-toggle", "value"),
-)
-def toggle_theme(dark_mode):
-    """Toggle between light and dark mode."""
-    is_dark = "dark" in (dark_mode or [])
-    theme = "dark" if is_dark else "light"
-    
-    if is_dark:
-        style = {"background": "#1a1a1a", "minHeight": "100vh", "padding": "20px", "color": "#e0e0e0"}
-    else:
-        style = {"background": "#f5f7fa", "minHeight": "100vh", "padding": "20px"}
-    
-    return theme, style
-
-
-# Add clientside callback to persist theme to localStorage
-app.clientside_callback(
-    """
-    function(theme) {
-        if (theme) {
-            localStorage.setItem('theme', theme);
-        }
-        return window.dash_clientside.no_update;
-    }
-    """,
-    Output("theme-store", "data", allow_duplicate=True),
-    Input("theme-store", "data"),
-    prevent_initial_call=True
-)
-
-# Load initial theme from localStorage
-app.clientside_callback(
-    """
-    function() {
-        const savedTheme = localStorage.getItem('theme');
-        if (savedTheme === 'dark') {
-            return ['dark'];
-        }
-        return [];
-    }
-    """,
-    Output("dark-mode-toggle", "value"),
-    Input("dark-mode-toggle", "id"),
-)
+    return "video-modal-overlay", "", "Video Player"
 
 
 # =========================
@@ -566,8 +997,7 @@ def main():
     print(f"📍 Open: http://{HOST}:{PORT}")
     print(f"🔗 API: {API_BASE_URL}")
     print("=" * 60 + "\n")
-    
-    # Disable debug mode when running in thread (signals don't work in threads)
+
     app.run(debug=False, host=HOST, port=PORT)
 
 

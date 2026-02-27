@@ -28,7 +28,6 @@ import plotly.graph_objects as go
 # Data source (injected by client.py)
 # =========================
 
-# This function will be replaced by client.py with actual shared memory accessor
 def get_latest_data():
     """Placeholder - replaced by client.py at runtime."""
     return None
@@ -47,9 +46,8 @@ DEFAULT_ZOOM = 18
 HOST = os.getenv("HOST", "127.0.0.1")
 PORT = int(os.getenv("PORT", "8050"))
 
-# Play through 15 seconds in ~15 seconds (1x speed)
-PLAYBACK_FPS = 3  # Match actual data rate
-FRAME_INTERVAL_MS = int(1000 / 3)  # ~333ms per frame
+PLAYBACK_FPS = 3
+FRAME_INTERVAL_MS = int(1000 / 3)
 
 COLOR_MAP = {
     "car": "rgb(255,0,0)",
@@ -66,16 +64,6 @@ INCIDENT_COLOR = "rgb(255,0,255)"
 # =========================
 
 def process_window_data(raw_data, location_filter="all"):
-    """
-    Process raw window data from backend into 1-second frames.
-    
-    Args:
-        raw_data: Dict with vehicles, incidents, timestamp from backend
-        location_filter: Filter by location ("all", "patterson", "foothill", etc.)
-    
-    Returns:
-        Processed data dict with frames, or None if invalid
-    """
     if not raw_data:
         return None
     
@@ -84,7 +72,6 @@ def process_window_data(raw_data, location_filter="all"):
         incidents = raw_data.get("incidents", [])
         timestamp = raw_data.get("timestamp")
         
-        # Filter by location if needed
         if location_filter != "all":
             vehicles = [v for v in vehicles if v.get("location") == location_filter]
             incidents = [i for i in incidents if i.get("location") == location_filter]
@@ -92,10 +79,8 @@ def process_window_data(raw_data, location_filter="all"):
         if not vehicles:
             return None
         
-        # Sort all vehicles by timestamp
         vehicles_sorted = sorted(vehicles, key=lambda v: v.get("timestamp", ""))
         
-        # Round timestamps to nearest second and group
         frames_dict = defaultdict(lambda: {"vehicles": [], "timestamp_display": None})
         
         for v in vehicles_sorted:
@@ -103,7 +88,6 @@ def process_window_data(raw_data, location_filter="all"):
             if not ts_str:
                 continue
             
-            # Parse timestamp and round to second
             try:
                 ts = pd.to_datetime(ts_str)
                 ts_rounded = ts.floor('10ms')
@@ -115,7 +99,6 @@ def process_window_data(raw_data, location_filter="all"):
             except:
                 continue
         
-        # Sort by timestamp to create ordered frames
         sorted_timestamps = sorted(frames_dict.keys())
         
         frames = []
@@ -132,7 +115,7 @@ def process_window_data(raw_data, location_filter="all"):
             "incidents": incidents,
             "timestamp": timestamp,
             "frames": frames,
-            "data_id": timestamp,  # Use timestamp as unique ID
+            "data_id": timestamp,
             "location_filter": location_filter
         }
     
@@ -163,10 +146,8 @@ def compute_center(vehicles, trim=0.1):
 
 
 def build_figure(center, frame_vehicles, all_vehicles, incidents, lat_off=0.0, lon_off=0.0):
-    """Build map showing current frame with trajectory lines."""
     fig = go.Figure()
     
-    # Draw trajectory lines (faint)
     trajectories = defaultdict(list)
     for v in all_vehicles:
         obj_id = str(v.get("id"))
@@ -195,7 +176,6 @@ def build_figure(center, frame_vehicles, all_vehicles, incidents, lat_off=0.0, l
             showlegend=False,
         ))
     
-    # Draw current frame vehicles
     if frame_vehicles:
         lons, lats, colors, texts, customdata = [], [], [], [], []
         
@@ -248,7 +228,6 @@ def build_figure(center, frame_vehicles, all_vehicles, incidents, lat_off=0.0, l
             ),
         ))
     
-    # Add incident markers
     if incidents and frame_vehicles:
         inc_lats, inc_lons, inc_texts = [], [], []
         
@@ -304,14 +283,142 @@ def build_figure(center, frame_vehicles, all_vehicles, incidents, lat_off=0.0, l
 
 
 # =========================
+# Shared theme helpers
+# =========================
+
+TOGGLE_CSS = """
+body { margin: 0; padding: 0; overflow-x: hidden; }
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.theme-toggle-btn {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 18px;
+    border-radius: 50px;
+    border: 2px solid rgba(0,0,0,0.12);
+    background: #ffffff;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    color: #333;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+    transition: all 0.25s ease;
+    user-select: none;
+    white-space: nowrap;
+}
+.theme-toggle-btn:hover {
+    box-shadow: 0 4px 16px rgba(0,0,0,0.18);
+    transform: translateY(-1px);
+}
+.theme-toggle-btn .toggle-track {
+    width: 38px;
+    height: 22px;
+    border-radius: 11px;
+    background: #ccc;
+    position: relative;
+    transition: background 0.25s ease;
+    flex-shrink: 0;
+}
+.theme-toggle-btn .toggle-track.active {
+    background: #667eea;
+}
+.theme-toggle-btn .toggle-thumb {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: white;
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    transition: transform 0.25s ease;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+}
+.theme-toggle-btn .toggle-track.active .toggle-thumb {
+    transform: translateX(16px);
+}
+.theme-toggle-btn.dark-mode {
+    background: #2d2d2d;
+    border-color: rgba(255,255,255,0.15);
+    color: #e0e0e0;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+}
+"""
+
+TOGGLE_JS = """
+window.DASHBOARD_THEME_KEY = 'dashboard_theme';
+(function() {
+    var saved = localStorage.getItem(window.DASHBOARD_THEME_KEY);
+    if (saved) document.documentElement.setAttribute('data-theme', saved);
+})();
+"""
+
+INDEX_STRING = '''
+<!DOCTYPE html>
+<html>
+    <head>
+        {%metas%}
+        <title>{%title%}</title>
+        {%favicon%}
+        {%css%}
+        <style>''' + TOGGLE_CSS + '''</style>
+        <script>''' + TOGGLE_JS + '''</script>
+    </head>
+    <body>
+        {%app_entry%}
+        <footer>
+            {%config%}
+            {%scripts%}
+            {%renderer%}
+        </footer>
+    </body>
+</html>
+'''
+
+
+def make_theme_toggle(toggle_id="theme-toggle"):
+    return html.Div(
+        id=f"{toggle_id}-wrapper",
+        children=[
+            dcc.Checklist(
+                id=toggle_id,
+                options=[{"label": "", "value": "dark"}],
+                value=[],
+                style={"display": "none"},
+            ),
+            html.Button(
+                id=f"{toggle_id}-btn",
+                children=[
+                    html.Div([
+                        html.Div(className="toggle-thumb"),
+                    ], id=f"{toggle_id}-track", className="toggle-track"),
+                    html.Span("Theme: Light", id=f"{toggle_id}-label"),
+                ],
+                className="theme-toggle-btn",
+                n_clicks=0,
+            ),
+        ],
+        style={
+            "position": "fixed",
+            "top": "20px",
+            "right": "20px",
+            "zIndex": 10000,
+        }
+    )
+
+
+# =========================
 # Dash App
 # =========================
 
 def main():
-    # Start immediately with empty data (don't wait)
     print("Starting map viewer (waiting for data)...")
     
-    # Initialize with empty data structure
     data = {
         "vehicles": [],
         "incidents": [],
@@ -321,40 +428,17 @@ def main():
         "location_filter": "all"
     }
     
-    # Create initial empty figure
     center = ANCHOR
-    initial_frame = []
-    fig = build_figure(center, initial_frame, [], [])
+    fig = build_figure(center, [], [], [])
     
     app = Dash(__name__)
     app.title = "Live Traffic Feed"
+    app.index_string = INDEX_STRING
     
     app.layout = html.Div([
-        # Dark mode toggle
-        html.Div([
-            html.Label([
-                dcc.Checklist(
-                    id="dark-mode-toggle",
-                    options=[{"label": "", "value": "dark"}],
-                    value=[],
-                    className="toggle-switch"
-                ),
-            ], className="toggle-container"),
-        ], style={
-            "position": "fixed",
-            "top": "20px",
-            "right": "20px",
-            "zIndex": 10000,
-            "display": "flex",
-            "alignItems": "center",
-            "padding": "8px 16px",
-            "borderRadius": "30px",
-            "backgroundColor": "rgba(255, 255, 255, 0.9)",
-            "backdropFilter": "blur(10px)",
-            "boxShadow": "0 4px 12px rgba(0,0,0,0.15)",
-        }),
+        make_theme_toggle("theme-toggle"),
         
-        # Header with gradient
+        # Header
         html.Div([
             html.Div([
                 html.H2("LIVE TRAFFIC MONITORING", style={
@@ -371,7 +455,6 @@ def main():
                 }),
             ], style={"flex": "1"}),
             
-            # Location selector dropdown
             html.Div([
                 html.Label("Location:", style={
                     "color": "white",
@@ -381,13 +464,10 @@ def main():
                 }),
                 dcc.Dropdown(
                     id="location-selector",
-                    options=[],  # Will be populated dynamically
+                    options=[],
                     value="all",
                     clearable=False,
-                    style={
-                        "width": "200px",
-                        "display": "inline-block"
-                    }
+                    style={"width": "200px", "display": "inline-block"}
                 ),
             ], style={"marginRight": "20px", "display": "flex", "alignItems": "center"}),
             
@@ -465,22 +545,13 @@ def main():
         # Map
         html.Div([
             dcc.Graph(id="map", figure=fig, style={"height": "100%", "width": "100%"}),
-            
-            # No Data Overlay
             html.Div(
                 id="no-data-overlay",
-                style={"display": "none"},  # Hidden by default
+                style={"display": "none"},
                 children=[
                     html.Div([
-                        html.H2("No Data Received", style={
-                            "color": "#666",
-                            "marginBottom": "10px",
-                            "fontSize": "32px"
-                        }),
-                        html.P("Waiting for vehicle data from camera...", style={
-                            "color": "#999",
-                            "fontSize": "16px"
-                        }),
+                        html.H2("No Data Received", style={"color": "#666", "marginBottom": "10px", "fontSize": "32px"}),
+                        html.P("Waiting for vehicle data from camera...", style={"color": "#999", "fontSize": "16px"}),
                         html.Div("", id="waiting-spinner", style={
                             "width": "50px",
                             "height": "50px",
@@ -505,7 +576,7 @@ def main():
             "overflow": "hidden",
             "boxShadow": "0 4px 20px rgba(0,0,0,0.1)",
             "marginBottom": "20px",
-            "position": "relative"  # For absolute positioning of overlay
+            "position": "relative"
         }),
         
         # Controls panel
@@ -542,7 +613,6 @@ def main():
                     }),
                 ], style={"marginBottom": "25px"}),
                 
-                # Camera controls in grid
                 html.Div([
                     html.Div([
                         html.Label("Camera Pitch", style={"fontWeight": "600", "marginBottom": "8px", "display": "block", "color": "#555"}),
@@ -594,10 +664,10 @@ def main():
         dcc.Store(id="alert-active", data=False),
         dcc.Store(id="last-alerted-data-id", data=None),
         dcc.Store(id="current-incident-id", data=None),
-        dcc.Store(id="raw-data-store", data=None),  # Store raw unfiltered data
-        dcc.Store(id="theme-store", data="light"),  # Theme store
+        dcc.Store(id="raw-data-store", data=None),
+        dcc.Store(id="theme-store", data="light"),
 
-        # Enhanced Incident modal with video
+        # Incident modal
         html.Div(
             id="incident-modal",
             style={"display": "none"},
@@ -613,24 +683,16 @@ def main():
                         "overflow": "hidden"
                     },
                     children=[
-                        # Header
                         html.Div([
                             html.H2("Incident Detected", style={"margin": "0", "color": "white", "fontSize": "24px"}),
                         ], style={
                             "padding": "20px 30px",
                             "background": "linear-gradient(135deg, #f093fb 0%, #f5576c 100%)",
                         }),
-                        
-                        # Body
                         html.Div([
                             html.Div(id="incident-modal-text", style={"marginBottom": "20px"}),
-                            
-                            # Video preview container
                             html.Div(id="video-preview-container", style={"marginTop": "20px"}),
-                            
                         ], style={"padding": "30px"}),
-                        
-                        # Footer with buttons
                         html.Div([
                             html.Button("Watch Video", id="watch-video-btn", n_clicks=0, style={
                                 "padding": "12px 24px",
@@ -675,190 +737,108 @@ def main():
         "minHeight": "100vh",
         "fontFamily": "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
     })
-    
-    @app.callback(
-        Output("theme-store", "data"),
-        Output("main-container", "style"),
-        Input("dark-mode-toggle", "value"),
-    )
-    def toggle_theme(dark_mode):
-        """Toggle between light and dark mode."""
-        is_dark = "dark" in (dark_mode or [])
-        theme = "dark" if is_dark else "light"
-        
-        if is_dark:
-            style = {
-                "padding": "30px",
-                "background": "#1a1a1a",
-                "minHeight": "100vh",
-                "fontFamily": "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
-                "color": "#e0e0e0"
-            }
-        else:
-            style = {
-                "padding": "30px",
-                "background": "#f5f7fa",
-                "minHeight": "100vh",
-                "fontFamily": "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
-            }
-        
-        return theme, style
-    
-    # Add clientside callback to persist theme to localStorage
+
+    # ---- Theme toggle clientside callbacks ----
     app.clientside_callback(
         """
-        function(theme) {
-            if (theme) {
-                localStorage.setItem('theme', theme);
+        function(n_clicks, current_value) {
+            if (n_clicks === undefined || n_clicks === null) {
+                return window.dash_clientside.no_update;
             }
-            return window.dash_clientside.no_update;
+            var isDark = current_value && current_value.includes('dark');
+            return isDark ? [] : ['dark'];
         }
         """,
-        Output("theme-store", "data", allow_duplicate=True),
-        Input("theme-store", "data"),
-        prevent_initial_call=True
+        Output("theme-toggle", "value"),
+        Input("theme-toggle-btn", "n_clicks"),
+        State("theme-toggle", "value"),
+        prevent_initial_call=True,
     )
-    
-    # Load initial theme from localStorage
+
     app.clientside_callback(
         """
-        function() {
-            const savedTheme = localStorage.getItem('theme');
-            if (savedTheme === 'dark') {
-                return ['dark'];
-            }
+        function(id) {
+            var saved = localStorage.getItem(window.DASHBOARD_THEME_KEY || 'dashboard_theme');
+            if (saved === 'dark') return ['dark'];
             return [];
         }
         """,
-        Output("dark-mode-toggle", "value"),
-        Input("dark-mode-toggle", "id"),
+        Output("theme-toggle", "value", allow_duplicate=True),
+        Input("theme-toggle", "id"),
+        prevent_initial_call='initial_duplicate',
     )
-    
-    # Add CSS for spinner animation
-    app.index_string = '''
-    <!DOCTYPE html>
-    <html>
-        <head>
-            {%metas%}
-            <title>{%title%}</title>
-            {%favicon%}
-            {%css%}
-            <style>
-                body {
-                    margin: 0;
-                    padding: 0;
-                    overflow-x: hidden;
+
+    app.clientside_callback(
+        """
+        function(value) {
+            var isDark = value && value.includes('dark');
+            var theme = isDark ? 'dark' : 'light';
+            localStorage.setItem(window.DASHBOARD_THEME_KEY || 'dashboard_theme', theme);
+            document.documentElement.setAttribute('data-theme', theme);
+            var btn = document.getElementById('theme-toggle-btn');
+            var track = document.getElementById('theme-toggle-track');
+            var label = document.getElementById('theme-toggle-label');
+            if (btn && track && label) {
+                if (isDark) {
+                    track.classList.add('active');
+                    label.textContent = 'Theme: Dark';
+                    btn.classList.add('dark-mode');
+                } else {
+                    track.classList.remove('active');
+                    label.textContent = 'Theme: Light';
+                    btn.classList.remove('dark-mode');
                 }
-                
-                @keyframes spin {
-                    0% { transform: rotate(0deg); }
-                    100% { transform: rotate(360deg); }
-                }
-                
-                /* iOS-style toggle switch */
-                .toggle-container {
-                    position: relative;
-                    display: inline-block;
-                    width: 50px;
-                    height: 28px;
-                }
-                
-                .toggle-switch {
-                    position: relative;
-                    display: inline-block;
-                    width: 50px;
-                    height: 28px;
-                }
-                
-                /* Hide the default checkbox */
-                .toggle-switch input[type="checkbox"] {
-                    position: absolute;
-                    opacity: 0;
-                    cursor: pointer;
-                    height: 0;
-                    width: 0;
-                }
-                
-                /* Create the slider background */
-                .toggle-switch label {
-                    position: absolute;
-                    cursor: pointer;
-                    top: 0;
-                    left: 0;
-                    right: 0;
-                    bottom: 0;
-                    background-color: #ccc;
-                    transition: 0.3s;
-                    border-radius: 28px;
-                }
-                
-                /* Create the white circle */
-                .toggle-switch label:before {
-                    position: absolute;
-                    content: "";
-                    height: 24px;
-                    width: 24px;
-                    left: 2px;
-                    bottom: 2px;
-                    background-color: white;
-                    transition: 0.3s;
-                    border-radius: 50%;
-                    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-                }
-                
-                /* When checked, change background to purple */
-                .toggle-switch input:checked + label {
-                    background-color: #667eea;
-                }
-                
-                /* When checked, slide the circle to the right */
-                .toggle-switch input:checked + label:before {
-                    transform: translateX(22px);
-                }
-            </style>
-        </head>
-        <body>
-            {%app_entry%}
-            <footer>
-                {%config%}
-                {%scripts%}
-                {%renderer%}
-            </footer>
-        </body>
-    </html>
-    '''
-    
+            }
+            return theme;
+        }
+        """,
+        Output("theme-store", "data"),
+        Input("theme-toggle", "value"),
+    )
+
+
+    app.clientside_callback(
+        """
+        function(theme) {
+            var isDark = theme === 'dark';
+            return {
+                padding: '30px',
+                background: isDark ? '#1a1a1a' : '#f5f7fa',
+                minHeight: '100vh',
+                fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
+                color: isDark ? '#e0e0e0' : '#333',
+            };
+        }
+        """,
+        Output("main-container", "style"),
+        Input("theme-store", "data"),
+    )
+
+
     @app.callback(
         Output("no-data-overlay", "style"),
         Input("data-store", "data"),
     )
     def toggle_no_data_overlay(data):
-        """Show overlay when no data, hide when data exists."""
         if not data or not data.get("vehicles"):
-            # Show overlay
             return {
                 "display": "flex",
                 "position": "absolute",
-                "top": 0,
-                "left": 0,
-                "width": "100%",
-                "height": "100%",
+                "top": 0, "left": 0,
+                "width": "100%", "height": "100%",
                 "backgroundColor": "rgba(245, 247, 250, 0.95)",
                 "zIndex": 1000,
                 "alignItems": "center",
                 "justifyContent": "center",
                 "borderRadius": "12px"
             }
-        else:
-            # Hide overlay
-            return {"display": "none"}
+        return {"display": "none"}
     
     @app.callback(
         Output("raw-data-store", "data"),
         Input("reload-interval", "n_intervals"),
     )
     def fetch_raw_data(n):
-        """Fetch raw unfiltered data from shared memory."""
         raw_data = get_latest_data()
         if raw_data is None:
             return dash.no_update
@@ -871,19 +851,13 @@ def main():
         State("location-selector", "value"),
     )
     def populate_location_dropdown(raw_data, current_value):
-        """Populate dropdown with available locations from data."""
         if not raw_data or not raw_data.get("vehicles"):
             return [], "all"
         
-        # Get unique locations from data
         locations = sorted(set(v.get("location") for v in raw_data["vehicles"] if v.get("location")))
-        
         options = [{"label": "All Locations", "value": "all"}]
         options.extend([{"label": loc.title(), "value": loc} for loc in locations])
-        
-        # Default to first location if only one exists
         default_value = current_value if current_value else ("all" if len(locations) > 1 else locations[0])
-        
         return options, default_value
     
     @app.callback(
@@ -894,17 +868,11 @@ def main():
         State("data-store", "data"),
     )
     def process_and_filter_data(raw_data, location_filter, current_data):
-        """Process raw data with location filter."""
         new_data = process_window_data(raw_data, location_filter)
-        
         if new_data is None:
             return dash.no_update, dash.no_update
-        
-        # Check if data changed
         if current_data and new_data["data_id"] == current_data.get("data_id") and new_data["location_filter"] == current_data.get("location_filter"):
             return dash.no_update, dash.no_update
-        
-        # New data or filter changed! Reset to frame 0
         print(f"New data! {len(new_data['frames'])} frames, {len(new_data['vehicles'])} observations (location: {location_filter})")
         return new_data, 0
     
@@ -913,7 +881,6 @@ def main():
         Input("data-store", "data"),
     )
     def update_stats(data):
-        """Update stats bar."""
         if not data or not data.get("vehicles"):
             return html.Div("Waiting for data...", style={"color": "#999"})
         
@@ -959,14 +926,11 @@ def main():
 
         if not incidents:
             raise PreventUpdate
-
         if last_alerted_id is not None and data_id == last_alerted_id:
             raise PreventUpdate
-
         if alert_active:
             raise PreventUpdate
 
-        # Build incident details
         lines = []
         for i, inc in enumerate(incidents[:5], 1):
             itype = inc.get("incident_type", "incident").upper()
@@ -984,10 +948,7 @@ def main():
 
         modal_text = html.Div([
             html.Div(f"{len(incidents)} incident(s) detected in this 15-second window", style={
-                "marginBottom": "15px",
-                "fontSize": "16px",
-                "fontWeight": "600",
-                "color": "#333"
+                "marginBottom": "15px", "fontSize": "16px", "fontWeight": "600", "color": "#333"
             }),
             html.Div(lines),
         ])
@@ -996,8 +957,7 @@ def main():
             "display": "flex",
             "position": "fixed",
             "top": 0, "left": 0,
-            "width": "100vw",
-            "height": "100vh",
+            "width": "100vw", "height": "100vh",
             "backgroundColor": "rgba(0,0,0,0.7)",
             "zIndex": 9999,
             "alignItems": "center",
@@ -1005,9 +965,7 @@ def main():
             "backdropFilter": "blur(4px)"
         }
 
-        # Store first incident ID for video lookup
         first_incident_id = str(incidents[0].get("_id")) if incidents else None
-
         return modal_style, modal_text, True, False, data_id, first_incident_id
     
     @app.callback(
@@ -1020,16 +978,13 @@ def main():
         if not n_clicks or not incident_id:
             raise PreventUpdate
         
-        # Fetch video for this incident
         try:
             response = requests.get(f"{API_BASE_URL}/videos/incident/{incident_id}", timeout=10)
-            
             if response.status_code == 200:
                 data = response.json()
                 if data.get("status") == "success":
                     video_info = data.get("video")
                     video_id = video_info.get("_id")
-                    
                     return html.Div([
                         html.Hr(style={"margin": "20px 0"}),
                         html.H4("Incident Video", style={"marginBottom": "15px"}),
@@ -1037,17 +992,12 @@ def main():
                             src=f"{API_BASE_URL}/videos/{video_id}",
                             controls=True,
                             autoPlay=True,
-                            style={
-                                "width": "100%",
-                                "borderRadius": "8px",
-                                "boxShadow": "0 4px 15px rgba(0,0,0,0.2)"
-                            }
+                            style={"width": "100%", "borderRadius": "8px", "boxShadow": "0 4px 15px rgba(0,0,0,0.2)"}
                         ),
                     ])
                 else:
                     return html.Div("No video available for this incident", style={"color": "#f5576c", "marginTop": "15px"})
-            else:
-                return html.Div("Could not load video", style={"color": "#f5576c", "marginTop": "15px"})
+            return html.Div("Could not load video", style={"color": "#f5576c", "marginTop": "15px"})
         except Exception as e:
             return html.Div(f"Error loading video: {str(e)}", style={"color": "#f5576c", "marginTop": "15px"})
     
@@ -1062,9 +1012,7 @@ def main():
     def dismiss_incident_modal(n_clicks):
         if not n_clicks:
             raise PreventUpdate
-
-        hidden_style = {"display": "none"}
-        return hidden_style, False, True, ""
+        return {"display": "none"}, False, True, ""
 
     @app.callback(
         Output("time-display", "children"),
@@ -1072,18 +1020,14 @@ def main():
         State("data-store", "data"),
     )
     def update_time_display(frame_idx, data):
-        """Show current frame timestamp."""
         if not data or not data.get("frames"):
             return "Waiting for data..."
-        
         frames = data["frames"]
         if frame_idx >= len(frames):
             return "Loading..."
-        
         frame = frames[frame_idx]
         ts_display = frame.get("timestamp_display", "")
         num_vehicles = len(frame.get("vehicles", []))
-        
         return f"{ts_display} • Frame {frame_idx + 1}/{len(frames)} • {num_vehicles} vehicles"
     
     @app.callback(
@@ -1095,19 +1039,12 @@ def main():
         prevent_initial_call=True,
     )
     def advance_frame(n, current_frame, data, is_playing):
-        """Advance to next frame every interval."""
         if not data or not data.get("frames") or not is_playing:
             return dash.no_update
-        
         frames = data["frames"]
-        
-        # Don't loop - stop at last frame
         if current_frame >= len(frames) - 1:
-            return dash.no_update  # Stay on last frame
-        
-        next_frame = current_frame + 1
-        
-        return next_frame
+            return dash.no_update
+        return current_frame + 1
     
     @app.callback(
         Output("playing", "data"),
@@ -1116,11 +1053,9 @@ def main():
         prevent_initial_call=True,
     )
     def toggle_playback(play_clicks, pause_clicks):
-        """Pause/resume playback."""
         ctx = dash.callback_context
         if not ctx.triggered:
             return True
-        
         button_id = ctx.triggered[0]["prop_id"].split(".")[0]
         return button_id == "play-btn"
     
@@ -1134,9 +1069,7 @@ def main():
         State("data-store", "data"),
     )
     def update_map(frame_idx, pitch, bearing, lat_offset, lon_offset, data):
-        """Update map with current frame."""
         if not data or not data.get("frames"):
-            # Return empty map centered on anchor
             empty_fig = build_figure(ANCHOR, [], [], [], lat_off=lat_offset, lon_off=lon_offset)
             empty_fig.update_layout(mapbox=dict(pitch=int(pitch), bearing=int(bearing)))
             return empty_fig
@@ -1147,10 +1080,8 @@ def main():
         
         frame_vehicles = frames[frame_idx]["vehicles"]
         center = compute_center(data["vehicles"])
-        
         new_fig = build_figure(center, frame_vehicles, data["vehicles"], data["incidents"], lat_off=lat_offset, lon_off=lon_offset)
         new_fig.update_layout(mapbox=dict(pitch=int(pitch), bearing=int(bearing)))
-        
         return new_fig
     
     @app.callback(

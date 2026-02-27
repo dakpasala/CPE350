@@ -54,12 +54,6 @@ INCIDENT_COLOR = "rgb(255,0,255)"
 # =========================
 
 def process_camera_feeds(raw_data):
-    """
-    Group data by location/camera for grid display.
-    
-    Returns:
-        Dict of {location: {vehicles, incidents, latest_timestamp}}
-    """
     if not raw_data:
         return {}
     
@@ -69,20 +63,16 @@ def process_camera_feeds(raw_data):
     if not vehicles:
         return {}
     
-    # Group by location
     cameras = defaultdict(lambda: {"vehicles": [], "incidents": [], "latest_timestamp": None})
     
     for v in vehicles:
         loc = v.get("location", "unknown")
         cameras[loc]["vehicles"].append(v)
-        
-        # Track latest timestamp
         ts = v.get("timestamp")
         if ts:
             if cameras[loc]["latest_timestamp"] is None or ts > cameras[loc]["latest_timestamp"]:
                 cameras[loc]["latest_timestamp"] = ts
     
-    # Add incidents
     for inc in incidents:
         loc = inc.get("location", "unknown")
         if loc in cameras:
@@ -92,7 +82,6 @@ def process_camera_feeds(raw_data):
 
 
 def compute_center(vehicles):
-    """Calculate center point from vehicle positions."""
     pts = [(v.get("lat"), v.get("lon")) for v in vehicles]
     pts = [(lat, lon) for lat, lon in pts if lat is not None and lon is not None
            and math.isfinite(lat) and math.isfinite(lon)]
@@ -107,7 +96,6 @@ def compute_center(vehicles):
 
 
 def build_preview_map(vehicles, incidents, location):
-    """Build small preview map for camera feed."""
     fig = go.Figure()
     
     if vehicles:
@@ -139,7 +127,6 @@ def build_preview_map(vehicles, incidents, location):
                 hoverinfo="skip",
             ))
     
-    # Add incident markers
     if incidents and vehicles:
         inc_lats, inc_lons = [], []
         
@@ -196,36 +183,160 @@ def build_preview_map(vehicles, incidents, location):
 # Dash App
 # =========================
 
+TOGGLE_CSS = """
+body { margin: 0; padding: 0; overflow-x: hidden; }
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* ---- Theme Toggle Button ---- */
+.theme-toggle-btn {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 18px;
+    border-radius: 50px;
+    border: 2px solid rgba(0,0,0,0.12);
+    background: #ffffff;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    color: #333;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+    transition: all 0.25s ease;
+    user-select: none;
+    white-space: nowrap;
+}
+.theme-toggle-btn:hover {
+    box-shadow: 0 4px 16px rgba(0,0,0,0.18);
+    transform: translateY(-1px);
+}
+.theme-toggle-btn .toggle-track {
+    width: 38px;
+    height: 22px;
+    border-radius: 11px;
+    background: #ccc;
+    position: relative;
+    transition: background 0.25s ease;
+    flex-shrink: 0;
+}
+.theme-toggle-btn .toggle-track.active {
+    background: #667eea;
+}
+.theme-toggle-btn .toggle-thumb {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: white;
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    transition: transform 0.25s ease;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+}
+.theme-toggle-btn .toggle-track.active .toggle-thumb {
+    transform: translateX(16px);
+}
+
+/* dark mode button variant */
+.theme-toggle-btn.dark-mode {
+    background: #2d2d2d;
+    border-color: rgba(255,255,255,0.15);
+    color: #e0e0e0;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+}
+
+.camera-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 8px 30px rgba(102, 126, 234, 0.3) !important;
+    border-color: #667eea !important;
+}
+"""
+
+TOGGLE_JS = """
+// Theme persistence across pages
+window.DASHBOARD_THEME_KEY = 'dashboard_theme';
+
+function applyTheme(theme) {
+    document.documentElement.setAttribute('data-theme', theme);
+}
+
+// Apply saved theme immediately on load (before React renders)
+(function() {
+    var saved = localStorage.getItem(window.DASHBOARD_THEME_KEY);
+    if (saved) applyTheme(saved);
+})();
+"""
+
+INDEX_STRING = '''
+<!DOCTYPE html>
+<html>
+    <head>
+        {%metas%}
+        <title>{%title%}</title>
+        {%favicon%}
+        {%css%}
+        <style>''' + TOGGLE_CSS + '''</style>
+        <script>''' + TOGGLE_JS + '''</script>
+    </head>
+    <body>
+        {%app_entry%}
+        <footer>
+            {%config%}
+            {%scripts%}
+            {%renderer%}
+        </footer>
+    </body>
+</html>
+'''
+
+
+def make_theme_toggle(toggle_id="theme-toggle"):
+    """Return the theme toggle button component."""
+    return html.Div(
+        id=f"{toggle_id}-wrapper",
+        children=[
+            # Hidden checklist to track state (Dash state management)
+            dcc.Checklist(
+                id=toggle_id,
+                options=[{"label": "", "value": "dark"}],
+                value=[],
+                style={"display": "none"},
+            ),
+            # Visual button (clientside will wire clicks)
+            html.Button(
+                id=f"{toggle_id}-btn",
+                children=[
+                    html.Div([
+                        html.Div(className="toggle-thumb"),
+                    ], id=f"{toggle_id}-track", className="toggle-track"),
+                    html.Span("Theme: Light", id=f"{toggle_id}-label"),
+                ],
+                className="theme-toggle-btn",
+                n_clicks=0,
+            ),
+        ],
+        style={
+            "position": "fixed",
+            "top": "20px",
+            "right": "20px",
+            "zIndex": 10000,
+        }
+    )
+
+
 def main():
     print("Starting security dashboard...")
     
     app = Dash(__name__)
     app.title = "Security Dashboard"
-    
+    app.index_string = INDEX_STRING
+
     app.layout = html.Div([
-        # Dark mode toggle
-        html.Div([
-            html.Label([
-                dcc.Checklist(
-                    id="dark-mode-toggle",
-                    options=[{"label": "", "value": "dark"}],
-                    value=[],
-                    className="toggle-switch"
-                ),
-            ], className="toggle-container"),
-        ], style={
-            "position": "fixed",
-            "top": "20px",
-            "right": "20px",
-            "zIndex": 10000,
-            "display": "flex",
-            "alignItems": "center",
-            "padding": "8px 16px",
-            "borderRadius": "30px",
-            "backgroundColor": "rgba(255, 255, 255, 0.9)",
-            "backdropFilter": "blur(10px)",
-            "boxShadow": "0 4px 12px rgba(0,0,0,0.15)",
-        }),
+        make_theme_toggle("theme-toggle"),
         
         # Header
         html.Div([
@@ -253,18 +364,13 @@ def main():
         # Camera Grid
         html.Div(id="camera-grid", style={
             "display": "grid",
-            "gridTemplateColumns": "repeat(4, 1fr)",  # 4 columns
+            "gridTemplateColumns": "repeat(4, 1fr)",
             "gap": "20px",
             "marginBottom": "30px"
         }),
         
-        # Refresh interval
         dcc.Interval(id="refresh-interval", interval=1000, n_intervals=0),
-        
-        # Store for camera data
         dcc.Store(id="cameras-store", data={}),
-        
-        # Store for theme
         dcc.Store(id="theme-store", data="light"),
         
         html.Div(
@@ -277,99 +383,108 @@ def main():
         "minHeight": "100vh",
         "fontFamily": "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
     })
-    
+
+    # ---- Clientside: wire up toggle button clicks + localStorage sync ----
+    app.clientside_callback(
+        """
+        function(n_clicks, current_value) {
+            if (n_clicks === undefined || n_clicks === null) {
+                return window.dash_clientside.no_update;
+            }
+            var isDark = current_value && current_value.includes('dark');
+            var newVal = isDark ? [] : ['dark'];
+            return newVal;
+        }
+        """,
+        Output("theme-toggle", "value"),
+        Input("theme-toggle-btn", "n_clicks"),
+        State("theme-toggle", "value"),
+        prevent_initial_call=True,
+    )
+
+    # Load theme from localStorage on page load
+    app.clientside_callback(
+        """
+        function(id) {
+            var saved = localStorage.getItem(window.DASHBOARD_THEME_KEY || 'dashboard_theme');
+            if (saved === 'dark') return ['dark'];
+            return [];
+        }
+        """,
+        Output("theme-toggle", "value", allow_duplicate=True),
+        Input("theme-toggle", "id"),
+        prevent_initial_call='initial_duplicate',
+    )
+
+    # Update button appearance + save to localStorage when value changes
+    app.clientside_callback(
+        """
+        function(value) {
+            var isDark = value && value.includes('dark');
+            var theme = isDark ? 'dark' : 'light';
+            localStorage.setItem(window.DASHBOARD_THEME_KEY || 'dashboard_theme', theme);
+            document.documentElement.setAttribute('data-theme', theme);
+            
+            var btn = document.getElementById('theme-toggle-btn');
+            var track = document.getElementById('theme-toggle-track');
+            var label = document.getElementById('theme-toggle-label');
+            if (btn && track && label) {
+                if (isDark) {
+                    track.classList.add('active');
+                    label.textContent = 'Theme: Dark';
+                    btn.classList.add('dark-mode');
+                } else {
+                    track.classList.remove('active');
+                    label.textContent = 'Theme: Light';
+                    btn.classList.remove('dark-mode');
+                }
+            }
+            return theme;
+        }
+        """,
+        Output("theme-store", "data"),
+        Input("theme-toggle", "value"),
+    )
+
+
+    app.clientside_callback(
+        """
+        function(theme) {
+            var isDark = theme === 'dark';
+            return {
+                padding: '30px',
+                background: isDark ? '#1a1a1a' : '#f5f7fa',
+                minHeight: '100vh',
+                fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
+                color: isDark ? '#e0e0e0' : '#333',
+            };
+        }
+        """,
+        Output("main-container", "style"),
+        Input("theme-store", "data"),
+    )
+
+
     @app.callback(
         Output("cameras-store", "data"),
         Input("refresh-interval", "n_intervals"),
     )
     def update_camera_data(n):
-        """Fetch latest data and group by camera."""
         raw_data = get_latest_data()
         cameras = process_camera_feeds(raw_data)
         return cameras
-    
-    @app.callback(
-        Output("theme-store", "data"),
-        Output("main-container", "style"),
-        Input("dark-mode-toggle", "value"),
-    )
-    def toggle_theme(dark_mode):
-        """Toggle between light and dark mode."""
-        is_dark = "dark" in (dark_mode or [])
-        theme = "dark" if is_dark else "light"
-        
-        if is_dark:
-            # Dark mode styles
-            style = {
-                "padding": "30px",
-                "background": "#1a1a1a",
-                "minHeight": "100vh",
-                "fontFamily": "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
-                "color": "#e0e0e0"
-            }
-        else:
-            # Light mode styles
-            style = {
-                "padding": "30px",
-                "background": "#f5f7fa",
-                "minHeight": "100vh",
-                "fontFamily": "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
-            }
-        
-        return theme, style
-    
-    # Add clientside callback to persist theme to localStorage
-    app.clientside_callback(
-        """
-        function(theme) {
-            if (theme) {
-                localStorage.setItem('theme', theme);
-            }
-            return window.dash_clientside.no_update;
-        }
-        """,
-        Output("theme-store", "data", allow_duplicate=True),
-        Input("theme-store", "data"),
-        prevent_initial_call=True
-    )
-    
-    # Load initial theme from localStorage
-    app.clientside_callback(
-        """
-        function() {
-            const savedTheme = localStorage.getItem('theme');
-            if (savedTheme === 'dark') {
-                return ['dark'];
-            }
-            return [];
-        }
-        """,
-        Output("dark-mode-toggle", "value"),
-        Input("dark-mode-toggle", "id"),
-    )
-    
+
     @app.callback(
         Output("camera-grid", "children"),
         Input("cameras-store", "data"),
         Input("theme-store", "data"),
     )
     def render_camera_grid(cameras, theme):
-        """Render grid of camera previews with theme support."""
         is_dark = theme == "dark"
         
-        # Theme colors
-        if is_dark:
-            bg_color = "#2d2d2d"
-            text_color = "#e0e0e0"
-            border_color = "#404040"
-            card_hover_shadow = "0 8px 30px rgba(255,255,255,0.1)"
-            no_data_bg = "#2d2d2d"
-        else:
-            bg_color = "white"
-            text_color = "#333"
-            border_color = "#eee"
-            card_hover_shadow = "0 8px 30px rgba(0,0,0,0.12)"
-            no_data_bg = "white"
+        bg_color = "#2d2d2d" if is_dark else "white"
+        text_color = "#e0e0e0" if is_dark else "#333"
+        border_color = "#404040" if is_dark else "#eee"
         
         if not cameras:
             return html.Div([
@@ -393,7 +508,7 @@ def main():
                         "margin": "20px auto"
                     }),
                 ], style={
-                    "background": no_data_bg,
+                    "background": bg_color,
                     "padding": "60px",
                     "borderRadius": "12px",
                     "boxShadow": "0 4px 20px rgba(0,0,0,0.1)",
@@ -410,17 +525,13 @@ def main():
             unique_vehicles = len(set(v.get("id") for v in vehicles))
             incident_count = len(incidents)
             
-            # Determine status
             is_live = len(vehicles) > 0
             status_color = "#4CAF50" if is_live else "#999"
             status_text = "LIVE" if is_live else "NO DATA"
             
-            # Build preview map
             preview_fig = build_preview_map(vehicles, incidents, location)
             
-            # Create camera card (entire card is clickable)
             card = html.A([
-                # Camera name header
                 html.Div([
                     html.H3(location.upper(), style={
                         "margin": "0",
@@ -429,16 +540,8 @@ def main():
                         "color": text_color
                     }),
                     html.Div([
-                        html.Span("●", style={
-                            "color": status_color,
-                            "fontSize": "10px",
-                            "marginRight": "5px"
-                        }),
-                        html.Span(status_text, style={
-                            "color": status_color,
-                            "fontSize": "11px",
-                            "fontWeight": "600"
-                        }),
+                        html.Span("●", style={"color": status_color, "fontSize": "10px", "marginRight": "5px"}),
+                        html.Span(status_text, style={"color": status_color, "fontSize": "11px", "fontWeight": "600"}),
                     ], style={"display": "flex", "alignItems": "center"}),
                 ], style={
                     "display": "flex",
@@ -449,7 +552,6 @@ def main():
                     "borderBottom": f"2px solid {border_color}"
                 }),
                 
-                # Preview map
                 html.Div([
                     dcc.Graph(
                         figure=preview_fig,
@@ -460,22 +562,13 @@ def main():
                     "borderRadius": "8px",
                     "overflow": "hidden",
                     "marginBottom": "12px",
-                    "background": "#f8f9fa" if not is_dark else "#1a1a1a"
+                    "background": "#1a1a1a" if is_dark else "#f8f9fa"
                 }),
                 
-                # Stats
                 html.Div([
                     html.Div([
-                        html.Span(str(unique_vehicles), style={
-                            "fontSize": "20px",
-                            "fontWeight": "bold",
-                            "color": "#667eea"
-                        }),
-                        html.Span(" Vehicles", style={
-                            "fontSize": "13px",
-                            "color": "#999" if is_dark else "#666",
-                            "marginLeft": "5px"
-                        }),
+                        html.Span(str(unique_vehicles), style={"fontSize": "20px", "fontWeight": "bold", "color": "#667eea"}),
+                        html.Span(" Vehicles", style={"fontSize": "13px", "color": "#999" if is_dark else "#666", "marginLeft": "5px"}),
                     ], style={"marginBottom": "6px"}),
                     html.Div([
                         html.Span(str(incident_count), style={
@@ -483,141 +576,33 @@ def main():
                             "fontWeight": "bold",
                             "color": "#f5576c" if incident_count > 0 else "#4CAF50"
                         }),
-                        html.Span(" Incidents", style={
-                            "fontSize": "13px",
-                            "color": "#999" if is_dark else "#666",
-                            "marginLeft": "5px"
-                        }),
+                        html.Span(" Incidents", style={"fontSize": "13px", "color": "#999" if is_dark else "#666", "marginLeft": "5px"}),
                     ]),
                 ], style={
-                    "marginBottom": "0",
                     "padding": "12px",
-                    "background": "#f8f9fa" if not is_dark else "#1a1a1a",
+                    "background": "#1a1a1a" if is_dark else "#f8f9fa",
                     "borderRadius": "8px"
                 }),
-            ], 
+            ],
             href=f"http://127.0.0.1:8053?location={location}",
             target="_blank",
             style={
                 "background": bg_color,
                 "padding": "16px",
                 "borderRadius": "12px",
-                "boxShadow": "0 4px 20px rgba(0,0,0,0.08)" if not is_dark else "0 4px 20px rgba(0,0,0,0.3)",
+                "boxShadow": "0 4px 20px rgba(0,0,0,0.3)" if is_dark else "0 4px 20px rgba(0,0,0,0.08)",
                 "border": f"2px solid {border_color}",
                 "transition": "all 0.3s ease",
                 "textDecoration": "none",
                 "display": "block",
                 "cursor": "pointer"
-            }, 
+            },
             className="camera-card")
             
             camera_cards.append(card)
         
         return camera_cards
-    
-    # Add CSS for spinner and hover effects
-    app.index_string = '''
-    <!DOCTYPE html>
-    <html>
-        <head>
-            {%metas%}
-            <title>{%title%}</title>
-            {%favicon%}
-            {%css%}
-            <style>
-                body {
-                    margin: 0;
-                    padding: 0;
-                    overflow-x: hidden;
-                }
-                
-                @keyframes spin {
-                    0% { transform: rotate(0deg); }
-                    100% { transform: rotate(360deg); }
-                }
-                
-                /* iOS-style toggle switch */
-                .toggle-container {
-                    position: relative;
-                    display: inline-block;
-                    width: 50px;
-                    height: 28px;
-                }
-                
-                .toggle-switch {
-                    position: relative;
-                    display: inline-block;
-                    width: 50px;
-                    height: 28px;
-                }
-                
-                /* Hide the default checkbox */
-                .toggle-switch input[type="checkbox"] {
-                    position: absolute;
-                    opacity: 0;
-                    cursor: pointer;
-                    height: 0;
-                    width: 0;
-                }
-                
-                /* Create the slider background */
-                .toggle-switch label {
-                    position: absolute;
-                    cursor: pointer;
-                    top: 0;
-                    left: 0;
-                    right: 0;
-                    bottom: 0;
-                    background-color: #ccc;
-                    transition: 0.3s;
-                    border-radius: 28px;
-                }
-                
-                /* Create the white circle */
-                .toggle-switch label:before {
-                    position: absolute;
-                    content: "";
-                    height: 24px;
-                    width: 24px;
-                    left: 2px;
-                    bottom: 2px;
-                    background-color: white;
-                    transition: 0.3s;
-                    border-radius: 50%;
-                    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-                }
-                
-                /* When checked, change background to purple */
-                .toggle-switch input:checked + label {
-                    background-color: #667eea;
-                }
-                
-                /* When checked, slide the circle to the right */
-                .toggle-switch input:checked + label:before {
-                    transform: translateX(22px);
-                }
-                
-                .camera-card:hover {
-                    transform: translateY(-5px);
-                    box-shadow: 0 8px 30px rgba(102, 126, 234, 0.3) !important;
-                    border-color: #667eea !important;
-                }
-                html[data-theme="dark"] .camera-card:hover {
-                    box-shadow: 0 8px 30px rgba(102, 126, 234, 0.4) !important;
-                }
-            </style>
-        </head>
-        <body>
-            {%app_entry%}
-            <footer>
-                {%config%}
-                {%scripts%}
-                {%renderer%}
-            </footer>
-        </body>
-    </html>
-    '''
-    
+
     print("\n" + "=" * 60)
     print("Security Dashboard - Multi-Camera View")
     print("=" * 60)
