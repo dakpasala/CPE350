@@ -222,7 +222,39 @@ def build_incident_card(incident):
 app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
 app.title = "Incident Video Viewer"
 
-app.layout = dbc.Container([
+app.layout = html.Div(id="main-container", children=[
+    # Dark mode toggle
+    html.Div([
+        html.Label([
+            html.Span("☀️", style={"marginRight": "8px", "fontSize": "18px"}),
+            "Light",
+        ], style={"marginRight": "10px", "color": "inherit"}),
+        dcc.Checklist(
+            id="dark-mode-toggle",
+            options=[{"label": "", "value": "dark"}],
+            value=[],
+            style={"margin": "0 10px"}
+        ),
+        html.Label([
+            "Dark",
+            html.Span("🌙", style={"marginLeft": "8px", "fontSize": "18px"}),
+        ], style={"color": "inherit"}),
+    ], style={
+        "position": "fixed",
+        "top": "20px",
+        "right": "20px",
+        "zIndex": 10000,
+        "display": "flex",
+        "alignItems": "center",
+        "background": "white",
+        "padding": "10px 15px",
+        "borderRadius": "25px",
+        "boxShadow": "0 2px 10px rgba(0,0,0,0.1)",
+        "fontSize": "14px",
+        "fontWeight": "500"
+    }),
+    
+    dbc.Container([
     html.H1("🚨 Traffic Incident Video Viewer", className="mt-4 mb-4"),
     
     dbc.Row([
@@ -325,7 +357,12 @@ app.layout = dbc.Container([
         ),
     ], id="video-modal", size="xl", is_open=False),
     
-], fluid=True)
+], fluid=True),
+    
+    # Theme store
+    dcc.Store(id="theme-store", data="light"),
+    
+], style={"background": "#f5f7fa", "minHeight": "100vh", "padding": "20px"})
 
 
 # =========================
@@ -470,6 +507,28 @@ def toggle_video_modal(watch_clicks, incident_clicks, close_click, is_open):
             return True, dbc.Alert("No video found for this incident", color="warning")
     
     return False, ""
+
+
+# =========================
+# Theme Toggle Callback
+# =========================
+
+@app.callback(
+    Output("theme-store", "data"),
+    Output("main-container", "style"),
+    Input("dark-mode-toggle", "value"),
+)
+def toggle_theme(dark_mode):
+    """Toggle between light and dark mode."""
+    is_dark = "dark" in (dark_mode or [])
+    theme = "dark" if is_dark else "light"
+    
+    if is_dark:
+        style = {"background": "#1a1a1a", "minHeight": "100vh", "padding": "20px", "color": "#e0e0e0"}
+    else:
+        style = {"background": "#f5f7fa", "minHeight": "100vh", "padding": "20px"}
+    
+    return theme, style
 
 
 # =========================

@@ -2,7 +2,7 @@
 """
 dashboard.py
 
-Multi-camera camera room dashboard.
+Multi-camera security room dashboard.
 Shows live previews of all active camera feeds in a grid layout.
 """
 
@@ -197,12 +197,45 @@ def build_preview_map(vehicles, incidents, location):
 # =========================
 
 def main():
-    print("Starting camera dashboard...")
+    print("Starting security dashboard...")
     
     app = Dash(__name__)
-    app.title = "Camera Dashboard"
+    app.title = "Security Dashboard"
     
     app.layout = html.Div([
+        # Dark mode toggle
+        html.Div([
+            html.Label([
+                html.Span("☀️", style={"marginRight": "8px", "fontSize": "18px"}),
+                "Light",
+            ], style={"marginRight": "10px", "color": "inherit"}),
+            html.Label([
+                dcc.Checklist(
+                    id="dark-mode-toggle",
+                    options=[{"label": "", "value": "dark"}],
+                    value=[],
+                    style={"margin": "0"}
+                ),
+            ], style={"marginRight": "10px"}),
+            html.Label([
+                "Dark",
+                html.Span("🌙", style={"marginLeft": "8px", "fontSize": "18px"}),
+            ], style={"color": "inherit"}),
+        ], style={
+            "position": "fixed",
+            "top": "20px",
+            "right": "20px",
+            "zIndex": 10000,
+            "display": "flex",
+            "alignItems": "center",
+            "background": "white",
+            "padding": "10px 15px",
+            "borderRadius": "25px",
+            "boxShadow": "0 2px 10px rgba(0,0,0,0.1)",
+            "fontSize": "14px",
+            "fontWeight": "500"
+        }),
+        
         # Header
         html.Div([
             html.H1("LIVE TRAFFIC MONITORING", style={
@@ -212,7 +245,7 @@ def main():
                 "fontWeight": "bold",
                 "textShadow": "2px 2px 4px rgba(0,0,0,0.3)"
             }),
-            html.P("Multi-Camera Camera Dashboard", style={
+            html.P("Multi-Camera Security Dashboard", style={
                 "color": "rgba(255,255,255,0.9)",
                 "margin": "10px 0 0 0",
                 "fontSize": "16px"
@@ -240,11 +273,14 @@ def main():
         # Store for camera data
         dcc.Store(id="cameras-store", data={}),
         
+        # Store for theme
+        dcc.Store(id="theme-store", data="light"),
+        
         html.Div(
-            f"Camera Dashboard • http://{HOST}:{PORT}",
+            f"Security Dashboard • http://{HOST}:{PORT}",
             style={"textAlign": "center", "color": "#999", "fontSize": "13px", "marginTop": "20px"}
         ),
-    ], style={
+    ], id="main-container", style={
         "padding": "30px",
         "background": "#f5f7fa",
         "minHeight": "100vh",
@@ -262,34 +298,81 @@ def main():
         return cameras
     
     @app.callback(
+        Output("theme-store", "data"),
+        Output("main-container", "style"),
+        Input("dark-mode-toggle", "value"),
+    )
+    def toggle_theme(dark_mode):
+        """Toggle between light and dark mode."""
+        is_dark = "dark" in (dark_mode or [])
+        theme = "dark" if is_dark else "light"
+        
+        if is_dark:
+            # Dark mode styles
+            style = {
+                "padding": "30px",
+                "background": "#1a1a1a",
+                "minHeight": "100vh",
+                "fontFamily": "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
+                "color": "#e0e0e0"
+            }
+        else:
+            # Light mode styles
+            style = {
+                "padding": "30px",
+                "background": "#f5f7fa",
+                "minHeight": "100vh",
+                "fontFamily": "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
+            }
+        
+        return theme, style
+    
+    @app.callback(
         Output("camera-grid", "children"),
         Input("cameras-store", "data"),
+        Input("theme-store", "data"),
     )
-    def render_camera_grid(cameras):
-        """Render grid of camera previews."""
+    def render_camera_grid(cameras, theme):
+        """Render grid of camera previews with theme support."""
+        is_dark = theme == "dark"
+        
+        # Theme colors
+        if is_dark:
+            bg_color = "#2d2d2d"
+            text_color = "#e0e0e0"
+            border_color = "#404040"
+            card_hover_shadow = "0 8px 30px rgba(255,255,255,0.1)"
+            no_data_bg = "#2d2d2d"
+        else:
+            bg_color = "white"
+            text_color = "#333"
+            border_color = "#eee"
+            card_hover_shadow = "0 8px 30px rgba(0,0,0,0.12)"
+            no_data_bg = "white"
+        
         if not cameras:
             return html.Div([
                 html.Div([
                     html.H2("No Active Cameras", style={
-                        "color": "#666",
+                        "color": "#999" if is_dark else "#666",
                         "marginBottom": "10px",
                         "fontSize": "28px"
                     }),
                     html.P("Waiting for camera data...", style={
-                        "color": "#999",
+                        "color": "#777" if is_dark else "#999",
                         "fontSize": "16px"
                     }),
                     html.Div("", style={
                         "width": "50px",
                         "height": "50px",
-                        "border": "5px solid #f3f3f3",
+                        "border": "5px solid #404040" if is_dark else "5px solid #f3f3f3",
                         "borderTop": "5px solid #667eea",
                         "borderRadius": "50%",
                         "animation": "spin 1s linear infinite",
                         "margin": "20px auto"
                     }),
                 ], style={
-                    "background": "white",
+                    "background": no_data_bg,
                     "padding": "60px",
                     "borderRadius": "12px",
                     "boxShadow": "0 4px 20px rgba(0,0,0,0.1)",
@@ -322,7 +405,7 @@ def main():
                         "margin": "0",
                         "fontSize": "18px",
                         "fontWeight": "600",
-                        "color": "#333"
+                        "color": text_color
                     }),
                     html.Div([
                         html.Span("●", style={
@@ -342,7 +425,7 @@ def main():
                     "alignItems": "center",
                     "marginBottom": "12px",
                     "paddingBottom": "12px",
-                    "borderBottom": "2px solid #eee"
+                    "borderBottom": f"2px solid {border_color}"
                 }),
                 
                 # Preview map
@@ -350,13 +433,13 @@ def main():
                     dcc.Graph(
                         figure=preview_fig,
                         config={'displayModeBar': False},
-                        style={"height": "180px", "width": "100%"}  # Smaller height
+                        style={"height": "180px", "width": "100%"}
                     ),
                 ], style={
                     "borderRadius": "8px",
                     "overflow": "hidden",
                     "marginBottom": "12px",
-                    "background": "#f8f9fa"
+                    "background": "#f8f9fa" if not is_dark else "#1a1a1a"
                 }),
                 
                 # Stats
@@ -369,7 +452,7 @@ def main():
                         }),
                         html.Span(" Vehicles", style={
                             "fontSize": "13px",
-                            "color": "#666",
+                            "color": "#999" if is_dark else "#666",
                             "marginLeft": "5px"
                         }),
                     ], style={"marginBottom": "6px"}),
@@ -381,25 +464,25 @@ def main():
                         }),
                         html.Span(" Incidents", style={
                             "fontSize": "13px",
-                            "color": "#666",
+                            "color": "#999" if is_dark else "#666",
                             "marginLeft": "5px"
                         }),
                     ]),
                 ], style={
                     "marginBottom": "0",
                     "padding": "12px",
-                    "background": "#f8f9fa",
+                    "background": "#f8f9fa" if not is_dark else "#1a1a1a",
                     "borderRadius": "8px"
                 }),
             ], 
             href=f"http://127.0.0.1:8053?location={location}",
             target="_blank",
             style={
-                "background": "white",
+                "background": bg_color,
                 "padding": "16px",
                 "borderRadius": "12px",
-                "boxShadow": "0 4px 20px rgba(0,0,0,0.08)",
-                "border": "2px solid #eee",
+                "boxShadow": "0 4px 20px rgba(0,0,0,0.08)" if not is_dark else "0 4px 20px rgba(0,0,0,0.3)",
+                "border": f"2px solid {border_color}",
                 "transition": "all 0.3s ease",
                 "textDecoration": "none",
                 "display": "block",
@@ -427,8 +510,11 @@ def main():
                 }
                 .camera-card:hover {
                     transform: translateY(-5px);
-                    box-shadow: 0 8px 30px rgba(0,0,0,0.12) !important;
+                    box-shadow: 0 8px 30px rgba(102, 126, 234, 0.3) !important;
                     border-color: #667eea !important;
+                }
+                html[data-theme="dark"] .camera-card:hover {
+                    box-shadow: 0 8px 30px rgba(102, 126, 234, 0.4) !important;
                 }
             </style>
         </head>

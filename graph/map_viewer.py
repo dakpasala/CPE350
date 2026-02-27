@@ -330,6 +330,39 @@ def main():
     app.title = "Live Traffic Feed"
     
     app.layout = html.Div([
+        # Dark mode toggle
+        html.Div([
+            html.Label([
+                html.Span("☀️", style={"marginRight": "8px", "fontSize": "18px"}),
+                "Light",
+            ], style={"marginRight": "10px", "color": "inherit"}),
+            html.Label([
+                dcc.Checklist(
+                    id="dark-mode-toggle",
+                    options=[{"label": "", "value": "dark"}],
+                    value=[],
+                    style={"margin": "0"}
+                ),
+            ], style={"marginRight": "10px"}),
+            html.Label([
+                "Dark",
+                html.Span("🌙", style={"marginLeft": "8px", "fontSize": "18px"}),
+            ], style={"color": "inherit"}),
+        ], style={
+            "position": "fixed",
+            "top": "20px",
+            "right": "20px",
+            "zIndex": 10000,
+            "display": "flex",
+            "alignItems": "center",
+            "background": "white",
+            "padding": "10px 15px",
+            "borderRadius": "25px",
+            "boxShadow": "0 2px 10px rgba(0,0,0,0.1)",
+            "fontSize": "14px",
+            "fontWeight": "500"
+        }),
+        
         # Header with gradient
         html.Div([
             html.Div([
@@ -571,6 +604,7 @@ def main():
         dcc.Store(id="last-alerted-data-id", data=None),
         dcc.Store(id="current-incident-id", data=None),
         dcc.Store(id="raw-data-store", data=None),  # Store raw unfiltered data
+        dcc.Store(id="theme-store", data="light"),  # Theme store
 
         # Enhanced Incident modal with video
         html.Div(
@@ -644,12 +678,40 @@ def main():
             f"{PLAYBACK_FPS} FPS Playback • http://{HOST}:{PORT}",
             style={"marginTop": "20px", "textAlign": "center", "color": "#999", "fontSize": "13px"}
         ),
-    ], style={
+    ], id="main-container", style={
         "padding": "30px",
         "background": "#f5f7fa",
         "minHeight": "100vh",
         "fontFamily": "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
     })
+    
+    @app.callback(
+        Output("theme-store", "data"),
+        Output("main-container", "style"),
+        Input("dark-mode-toggle", "value"),
+    )
+    def toggle_theme(dark_mode):
+        """Toggle between light and dark mode."""
+        is_dark = "dark" in (dark_mode or [])
+        theme = "dark" if is_dark else "light"
+        
+        if is_dark:
+            style = {
+                "padding": "30px",
+                "background": "#1a1a1a",
+                "minHeight": "100vh",
+                "fontFamily": "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
+                "color": "#e0e0e0"
+            }
+        else:
+            style = {
+                "padding": "30px",
+                "background": "#f5f7fa",
+                "minHeight": "100vh",
+                "fontFamily": "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
+            }
+        
+        return theme, style
     
     # Add CSS for spinner animation
     app.index_string = '''
