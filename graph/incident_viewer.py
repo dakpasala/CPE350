@@ -195,7 +195,7 @@ def build_incident_card(incident):
             id={"type": "incident-video-btn", "index": incident_id},
             n_clicks=0,
             style={
-                "width": "100%", "padding": "10px", "fontSize": "14px", "fontWeight": "600",
+                "width": "100%", "padding": "10px 20px", "fontSize": "14px", "fontWeight": "600",
                 "borderRadius": "8px", "border": "none",
                 "background": "linear-gradient(135deg, #f093fb 0%, #f5576c 100%)",
                 "color": "white", "cursor": "pointer", "boxShadow": "0 4px 12px rgba(245,87,108,0.3)",
@@ -396,7 +396,8 @@ body { margin: 0; padding: 0; overflow-x: hidden; }
 TOGGLE_JS = """
 window.DASHBOARD_THEME_KEY = 'dashboard_theme';
 (function() {
-    var saved = localStorage.getItem('dashboard_theme');
+    var match = document.cookie.match('(?:^|; )dashboard_theme=([^;]*)');
+    var saved = match ? match[1] : null;
     if (saved) document.documentElement.setAttribute('data-theme', saved);
 })();
 """
@@ -631,11 +632,12 @@ app.clientside_callback(
     prevent_initial_call=True,
 )
 
-# FIX 1: Read localStorage after React mounts (no inline script dark flash)
+# FIX 1: Read cookie after React mounts
 app.clientside_callback(
     """
     function(id) {
-        var saved = localStorage.getItem(window.DASHBOARD_THEME_KEY || 'dashboard_theme');
+        var match = document.cookie.match('(?:^|; )dashboard_theme=([^;]*)');
+        var saved = match ? match[1] : null;
         if (saved === 'dark') return ['dark'];
         return [];
     }
@@ -650,7 +652,7 @@ app.clientside_callback(
     function(value) {
         var isDark = value && value.includes('dark');
         var theme = isDark ? 'dark' : 'light';
-        localStorage.setItem(window.DASHBOARD_THEME_KEY || 'dashboard_theme', theme);
+        document.cookie = 'dashboard_theme=' + theme + ';path=/;max-age=31536000;SameSite=Lax';
         document.documentElement.setAttribute('data-theme', theme);
         
         var btn = document.getElementById('theme-toggle-btn');

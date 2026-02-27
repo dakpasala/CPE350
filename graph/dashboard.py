@@ -272,10 +272,9 @@ body { margin: 0; padding: 0; overflow-x: hidden; }
 
 TOGGLE_JS = """
 window.DASHBOARD_THEME_KEY = 'dashboard_theme';
-// Apply theme immediately from localStorage so there's zero flash.
-// CSS [data-theme="dark"] selectors handle all visual theming.
 (function() {
-    var saved = localStorage.getItem('dashboard_theme');
+    var match = document.cookie.match('(?:^|; )dashboard_theme=([^;]*)');
+    var saved = match ? match[1] : null;
     if (saved) document.documentElement.setAttribute('data-theme', saved);
 })();
 """
@@ -406,12 +405,12 @@ def main():
         prevent_initial_call=True,
     )
 
-    # FIX 1: Load theme from localStorage on page mount — this runs after React renders,
-    # so there's no premature dark-mode flash on initial load.
+    # FIX 1: Load theme from cookie on page mount
     app.clientside_callback(
         """
         function(id) {
-            var saved = localStorage.getItem(window.DASHBOARD_THEME_KEY || 'dashboard_theme');
+            var match = document.cookie.match('(?:^|; )dashboard_theme=([^;]*)');
+            var saved = match ? match[1] : null;
             if (saved === 'dark') return ['dark'];
             return [];
         }
@@ -421,13 +420,13 @@ def main():
         prevent_initial_call='initial_duplicate',
     )
 
-    # Update button appearance + save to localStorage when value changes
+    # Update button appearance + save to cookie when value changes
     app.clientside_callback(
         """
         function(value) {
             var isDark = value && value.includes('dark');
             var theme = isDark ? 'dark' : 'light';
-            localStorage.setItem(window.DASHBOARD_THEME_KEY || 'dashboard_theme', theme);
+            document.cookie = 'dashboard_theme=' + theme + ';path=/;max-age=31536000;SameSite=Lax';
             document.documentElement.setAttribute('data-theme', theme);
             
             var btn = document.getElementById('theme-toggle-btn');
