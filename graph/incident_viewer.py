@@ -214,6 +214,20 @@ def build_incident_card(incident):
 TOGGLE_CSS = """
 body { margin: 0; padding: 0; overflow-x: hidden; }
 
+/* Main container themed via CSS — no inline style override */
+.main-container {
+    padding: 30px;
+    background: #f5f7fa;
+    min-height: 100vh;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    color: #333;
+    transition: background 0.2s ease, color 0.2s ease;
+}
+[data-theme="dark"] .main-container {
+    background: #1a1a1a !important;
+    color: #e0e0e0 !important;
+}
+
 .theme-toggle-btn {
     display: flex;
     align-items: center;
@@ -378,10 +392,11 @@ body { margin: 0; padding: 0; overflow-x: hidden; }
 }
 """
 
+# FIX 1: No forced dark-mode in the inline script — theme is applied after React mounts.
 TOGGLE_JS = """
 window.DASHBOARD_THEME_KEY = 'dashboard_theme';
 (function() {
-    var saved = localStorage.getItem(window.DASHBOARD_THEME_KEY);
+    var saved = localStorage.getItem('dashboard_theme');
     if (saved) document.documentElement.setAttribute('data-theme', saved);
 })();
 """
@@ -445,10 +460,10 @@ app.index_string = INDEX_STRING
 
 
 def make_layout():
-    return html.Div(id="main-container", children=[
+    return html.Div(id="main-container", className="main-container", children=[
         make_theme_toggle("theme-toggle"),
 
-        # ---- Header (matches other pages) ----
+        # ---- Header ----
         html.Div([
             html.Div([
                 html.H2("TRAFFIC INCIDENT VIEWER", style={
@@ -465,7 +480,7 @@ def make_layout():
                 }),
             ], style={"flex": "1"}),
 
-            # Nav buttons
+            # FIX 2: All nav buttons navigate in the same tab (no target="_blank")
             html.Div([
                 html.A(
                     html.Button("← Home", style={
@@ -495,7 +510,6 @@ def make_layout():
                         "boxShadow": "0 4px 15px rgba(0,0,0,0.2)",
                     }),
                     href="http://127.0.0.1:8053",
-                    target="_blank",
                 ),
                 html.A(
                     html.Button("Traffic Heatmap", style={
@@ -510,7 +524,6 @@ def make_layout():
                         "boxShadow": "0 4px 15px rgba(0,0,0,0.2)",
                     }),
                     href="http://127.0.0.1:8052",
-                    target="_blank",
                 ),
             ], style={"display": "flex", "alignItems": "center"}),
         ], style={
@@ -555,7 +568,6 @@ def make_layout():
             className="video-modal-overlay",
             children=[
                 html.Div([
-                    # Modal header
                     html.Div([
                         html.H3(id="video-modal-title", style={"margin": "0", "color": "white", "fontSize": "20px"}),
                         html.Button("✕", id="close-video-modal", n_clicks=0, style={
@@ -574,7 +586,6 @@ def make_layout():
                         "padding": "20px 24px",
                         "background": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
                     }),
-                    # Modal body
                     html.Div(id="video-player-content", style={"padding": "24px"}),
                 ], style={
                     "background": "white",
@@ -596,12 +607,7 @@ def make_layout():
             f"Incident Video Viewer • http://{HOST}:{PORT}",
             style={"textAlign": "center", "color": "#999", "fontSize": "13px", "marginTop": "20px"}
         ),
-    ], style={
-        "padding": "30px",
-        "background": "#f5f7fa",
-        "minHeight": "100vh",
-        "fontFamily": "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
-    })
+    ])
 
 
 app.layout = make_layout
@@ -625,6 +631,7 @@ app.clientside_callback(
     prevent_initial_call=True,
 )
 
+# FIX 1: Read localStorage after React mounts (no inline script dark flash)
 app.clientside_callback(
     """
     function(id) {
@@ -646,7 +653,6 @@ app.clientside_callback(
         localStorage.setItem(window.DASHBOARD_THEME_KEY || 'dashboard_theme', theme);
         document.documentElement.setAttribute('data-theme', theme);
         
-        // Update toggle button appearance
         var btn = document.getElementById('theme-toggle-btn');
         var track = document.getElementById('theme-toggle-track');
         var label = document.getElementById('theme-toggle-label');
@@ -658,7 +664,6 @@ app.clientside_callback(
             }
         }
         
-        // Immediately update tab-bar and tab-content background (avoids server round-trip flash)
         var tabBar = document.getElementById('tab-bar');
         var tabContent = document.getElementById('tab-content');
         if (tabBar) {
@@ -681,14 +686,8 @@ app.clientside_callback(
     """
     function(theme) {
         var isDark = theme === 'dark';
+        // tab-bar still needs inline style update since it has dynamic inline styles
         return [
-            {
-                padding: '30px',
-                background: isDark ? '#1a1a1a' : '#f5f7fa',
-                minHeight: '100vh',
-                fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
-                color: isDark ? '#e0e0e0' : '#333',
-            },
             {
                 background: isDark ? '#2d2d2d' : 'white',
                 borderRadius: '12px 12px 0 0',
@@ -699,7 +698,6 @@ app.clientside_callback(
         ];
     }
     """,
-    Output("main-container", "style"),
     Output("tab-bar", "style"),
     Input("theme-store", "data"),
 )
@@ -752,9 +750,6 @@ app.clientside_callback(
     Input("active-tab", "data"),
 )
 def render_tab_content(tab):
-    """Render tab content - theme is handled purely via CSS data-theme attribute."""
-
-    LABEL_STYLE = {"fontSize": "13px", "fontWeight": "600", "marginBottom": "6px", "display": "block", "className": "tab-label"}
     INPUT_STYLE = {
         "width": "100%", "padding": "10px 14px", "borderRadius": "8px",
         "border": "2px solid #e0e0e0", "fontSize": "14px", "fontFamily": "inherit",

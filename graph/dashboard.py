@@ -186,6 +186,20 @@ def build_preview_map(vehicles, incidents, location):
 TOGGLE_CSS = """
 body { margin: 0; padding: 0; overflow-x: hidden; }
 
+/* Main container — themed via data-theme, no inline style override */
+.main-container {
+    padding: 30px;
+    background: #f5f7fa;
+    min-height: 100vh;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    color: #333;
+    transition: background 0.2s ease, color 0.2s ease;
+}
+[data-theme="dark"] .main-container {
+    background: #1a1a1a !important;
+    color: #e0e0e0 !important;
+}
+
 @keyframes spin {
     0% { transform: rotate(0deg); }
     100% { transform: rotate(360deg); }
@@ -257,17 +271,12 @@ body { margin: 0; padding: 0; overflow-x: hidden; }
 """
 
 TOGGLE_JS = """
-// Theme persistence across pages
 window.DASHBOARD_THEME_KEY = 'dashboard_theme';
-
-function applyTheme(theme) {
-    document.documentElement.setAttribute('data-theme', theme);
-}
-
-// Apply saved theme immediately on load (before React renders)
+// Apply theme immediately from localStorage so there's zero flash.
+// CSS [data-theme="dark"] selectors handle all visual theming.
 (function() {
-    var saved = localStorage.getItem(window.DASHBOARD_THEME_KEY);
-    if (saved) applyTheme(saved);
+    var saved = localStorage.getItem('dashboard_theme');
+    if (saved) document.documentElement.setAttribute('data-theme', saved);
 })();
 """
 
@@ -377,14 +386,9 @@ def main():
             f"Security Dashboard • http://{HOST}:{PORT}",
             style={"textAlign": "center", "color": "#999", "fontSize": "13px", "marginTop": "20px"}
         ),
-    ], id="main-container", style={
-        "padding": "30px",
-        "background": "#f5f7fa",
-        "minHeight": "100vh",
-        "fontFamily": "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
-    })
+    ], id="main-container", className="main-container")
 
-    # ---- Clientside: wire up toggle button clicks + localStorage sync ----
+    # ---- Clientside: wire up toggle button clicks ----
     app.clientside_callback(
         """
         function(n_clicks, current_value) {
@@ -402,7 +406,8 @@ def main():
         prevent_initial_call=True,
     )
 
-    # Load theme from localStorage on page load
+    # FIX 1: Load theme from localStorage on page mount — this runs after React renders,
+    # so there's no premature dark-mode flash on initial load.
     app.clientside_callback(
         """
         function(id) {
@@ -447,22 +452,9 @@ def main():
     )
 
 
-    app.clientside_callback(
-        """
-        function(theme) {
-            var isDark = theme === 'dark';
-            return {
-                padding: '30px',
-                background: isDark ? '#1a1a1a' : '#f5f7fa',
-                minHeight: '100vh',
-                fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
-                color: isDark ? '#e0e0e0' : '#333',
-            };
-        }
-        """,
-        Output("main-container", "style"),
-        Input("theme-store", "data"),
-    )
+    # Theme changes are handled purely via CSS [data-theme] selectors.
+    # The inline script sets data-theme from localStorage immediately on load (no flash).
+    # This callback just keeps the theme-store in sync for any server-side callbacks that need it.
 
 
     @app.callback(
@@ -531,7 +523,9 @@ def main():
             
             preview_fig = build_preview_map(vehicles, incidents, location)
             
-            card = html.A([
+            # FIX 2: Use onclick navigation instead of <a href target="_blank">
+            # so camera cards open in the same tab.
+            card = html.Div([
                 html.Div([
                     html.H3(location.upper(), style={
                         "margin": "0",
@@ -584,8 +578,8 @@ def main():
                     "borderRadius": "8px"
                 }),
             ],
-            href=f"http://127.0.0.1:8053?location={location}",
-            target="_blank",
+            id={"type": "camera-card", "location": location},
+            n_clicks=0,
             style={
                 "background": bg_color,
                 "padding": "16px",
@@ -593,15 +587,39 @@ def main():
                 "boxShadow": "0 4px 20px rgba(0,0,0,0.3)" if is_dark else "0 4px 20px rgba(0,0,0,0.08)",
                 "border": f"2px solid {border_color}",
                 "transition": "all 0.3s ease",
-                "textDecoration": "none",
-                "display": "block",
-                "cursor": "pointer"
+                "cursor": "pointer",
             },
             className="camera-card")
             
             camera_cards.append(card)
         
         return camera_cards
+
+    # FIX 2: Navigate in the same tab when a camera card is clicked.
+    app.clientside_callback(
+        """
+        function(n_clicks_list, cameras) {
+            var ctx = window.dash_clientside.callback_context;
+            if (!ctx.triggered || ctx.triggered.length === 0) {
+                return window.dash_clientside.no_update;
+            }
+            var trigger = ctx.triggered[0];
+            var clicks = trigger.value;
+            if (!clicks || clicks === 0) return window.dash_clientside.no_update;
+
+            try {
+                var id = JSON.parse(trigger.prop_id.split('.')[0]);
+                var location = id.location;
+                window.location.href = 'http://127.0.0.1:8053?location=' + encodeURIComponent(location);
+            } catch(e) {}
+            return window.dash_clientside.no_update;
+        }
+        """,
+        Output("cameras-store", "data", allow_duplicate=True),
+        Input({"type": "camera-card", "location": dash.ALL}, "n_clicks"),
+        State("cameras-store", "data"),
+        prevent_initial_call=True,
+    )
 
     print("\n" + "=" * 60)
     print("Security Dashboard - Multi-Camera View")

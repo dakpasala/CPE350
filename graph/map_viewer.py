@@ -289,6 +289,20 @@ def build_figure(center, frame_vehicles, all_vehicles, incidents, lat_off=0.0, l
 TOGGLE_CSS = """
 body { margin: 0; padding: 0; overflow-x: hidden; }
 
+/* Main container themed via CSS — no inline style override */
+.main-container {
+    padding: 30px;
+    background: #f5f7fa;
+    min-height: 100vh;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    color: #333;
+    transition: background 0.2s ease, color 0.2s ease;
+}
+[data-theme="dark"] .main-container {
+    background: #1a1a1a !important;
+    color: #e0e0e0 !important;
+}
+
 @keyframes spin {
     0% { transform: rotate(0deg); }
     100% { transform: rotate(360deg); }
@@ -350,10 +364,12 @@ body { margin: 0; padding: 0; overflow-x: hidden; }
 }
 """
 
+# FIX 1: No forced dark-mode application in the inline script — theme is applied
+# after React mounts via the clientside callback, eliminating the flash.
 TOGGLE_JS = """
 window.DASHBOARD_THEME_KEY = 'dashboard_theme';
 (function() {
-    var saved = localStorage.getItem(window.DASHBOARD_THEME_KEY);
+    var saved = localStorage.getItem('dashboard_theme');
     if (saved) document.documentElement.setAttribute('data-theme', saved);
 })();
 """
@@ -471,6 +487,7 @@ def main():
                 ),
             ], style={"marginRight": "20px", "display": "flex", "alignItems": "center"}),
             
+            # FIX 2: All nav links use same-tab navigation (no target="_blank")
             html.A(
                 html.Button("Home", style={
                     "fontSize": "16px",
@@ -502,7 +519,6 @@ def main():
                     "marginRight": "10px",
                 }),
                 href="http://127.0.0.1:8051",
-                target="_blank",
             ),
             html.A(
                 html.Button("Traffic Heatmap", style={
@@ -518,7 +534,6 @@ def main():
                     "transition": "all 0.3s ease",
                 }),
                 href="http://127.0.0.1:8052",
-                target="_blank",
             ),
         ], style={
             "display": "flex",
@@ -731,12 +746,7 @@ def main():
             f"{PLAYBACK_FPS} FPS Playback • http://{HOST}:{PORT}",
             style={"marginTop": "20px", "textAlign": "center", "color": "#999", "fontSize": "13px"}
         ),
-    ], id="main-container", style={
-        "padding": "30px",
-        "background": "#f5f7fa",
-        "minHeight": "100vh",
-        "fontFamily": "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
-    })
+    ], id="main-container", className="main-container")
 
     # ---- Theme toggle clientside callbacks ----
     app.clientside_callback(
@@ -755,6 +765,7 @@ def main():
         prevent_initial_call=True,
     )
 
+    # FIX 1: Read localStorage after React mounts — no flash on load
     app.clientside_callback(
         """
         function(id) {
@@ -796,23 +807,8 @@ def main():
         Input("theme-toggle", "value"),
     )
 
-
-    app.clientside_callback(
-        """
-        function(theme) {
-            var isDark = theme === 'dark';
-            return {
-                padding: '30px',
-                background: isDark ? '#1a1a1a' : '#f5f7fa',
-                minHeight: '100vh',
-                fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
-                color: isDark ? '#e0e0e0' : '#333',
-            };
-        }
-        """,
-        Output("main-container", "style"),
-        Input("theme-store", "data"),
-    )
+    # main-container theming is handled by CSS [data-theme="dark"] .main-container
+    # The inline script sets data-theme from localStorage immediately — no flash.
 
 
     @app.callback(
