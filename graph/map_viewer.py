@@ -58,6 +58,10 @@ COLOR_MAP = {
 DEFAULT_COLOR = "rgb(0,128,255)"
 INCIDENT_COLOR = "rgb(255,0,255)"
 
+# Caltrans Colors
+CALTRANS_BLUE = "#003366"
+CALTRANS_GREEN = "#007B5F"
+
 
 # =========================
 # Data Processing
@@ -313,22 +317,14 @@ body { margin: 0; padding: 0; overflow-x: hidden; }
     align-items: center;
     gap: 10px;
     padding: 8px 18px;
-    border-radius: 50px;
-    border: 2px solid rgba(0,0,0,0.12);
-    background: #ffffff;
-    cursor: pointer;
-    font-size: 14px;
-    font-weight: 600;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    color: #333;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.12);
-    transition: all 0.25s ease;
-    user-select: none;
-    white-space: nowrap;
+    border-radius: 4px; /* formal look */
+    border: 2px solid rgba(255,255,255,0.2);
+    background: rgba(255,255,255,0.1);
+    color: white;
+    box-shadow: none;
 }
 .theme-toggle-btn:hover {
-    box-shadow: 0 4px 16px rgba(0,0,0,0.18);
-    transform: translateY(-1px);
+    background: rgba(255,255,255,0.2);
 }
 .theme-toggle-btn .toggle-track {
     width: 38px;
@@ -340,7 +336,7 @@ body { margin: 0; padding: 0; overflow-x: hidden; }
     flex-shrink: 0;
 }
 .theme-toggle-btn .toggle-track.active {
-    background: #667eea;
+    background: #007B5F;
 }
 .theme-toggle-btn .toggle-thumb {
     width: 18px;
@@ -534,96 +530,101 @@ def main():
     app.layout = html.Div([
         make_theme_toggle("theme-toggle"),
         
-        # Header
+        # Header (Caltrans formal style)
         html.Div([
             html.Div([
                 html.H2("LIVE TRAFFIC MONITORING", style={
                     "color": "white",
                     "margin": "0",
-                    "fontSize": "28px",
-                    "fontWeight": "bold",
-                    "textShadow": "2px 2px 4px rgba(0,0,0,0.3)"
+                    "fontSize": "30px",
+                    "fontWeight": "800",
+                    "letterSpacing": "1.2px"
                 }),
-                html.P("Real-time incident detection", style={
+                html.Div(style={
+                    "width": "44px",
+                    "height": "4px",
+                    "background": CALTRANS_GREEN,
+                    "margin": "10px 0 8px 0"
+                }),
+                html.P("DIVISION OF TRAFFIC OPERATIONS • REAL-TIME INCIDENT DETECTION", style={
                     "color": "rgba(255,255,255,0.9)",
-                    "margin": "5px 0 0 0",
-                    "fontSize": "14px"
+                    "margin": "0",
+                    "fontSize": "12px",
+                    "letterSpacing": "1.4px",
+                    "fontWeight": "500"
                 }),
             ], style={"flex": "1"}),
             
             html.Div([
-                html.Label("Location:", style={
-                    "color": "white",
-                    "marginRight": "10px",
-                    "fontSize": "14px",
-                    "fontWeight": "600"
-                }),
-                dcc.Dropdown(
-                    id="location-selector",
-                    options=[],
-                    value="all",
-                    clearable=False,
-                    style={"width": "200px", "display": "inline-block"}
-                ),
-            ], style={"marginRight": "20px", "display": "flex", "alignItems": "center"}),
-            
-            # FIX 2: All nav links use same-tab navigation (no target="_blank")
-            html.A(
-                html.Button("Home", style={
-                    "fontSize": "16px",
-                    "padding": "12px 24px",
-                    "background": "white",
-                    "color": "#667eea",
-                    "border": "2px solid white",
-                    "borderRadius": "8px",
-                    "cursor": "pointer",
-                    "fontWeight": "600",
-                    "boxShadow": "0 4px 15px rgba(0,0,0,0.2)",
-                    "transition": "all 0.3s ease",
-                    "marginRight": "10px",
-                }),
-                href="http://127.0.0.1:8050",
-            ),
-            html.A(
-                html.Button("View All Incidents", style={
-                    "fontSize": "16px",
-                    "padding": "12px 24px",
-                    "background": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
-                    "color": "white",
-                    "border": "none",
-                    "borderRadius": "8px",
-                    "cursor": "pointer",
-                    "fontWeight": "600",
-                    "boxShadow": "0 4px 15px rgba(0,0,0,0.2)",
-                    "transition": "all 0.3s ease",
-                    "marginRight": "10px",
-                }),
-                href="http://127.0.0.1:8051",
-            ),
-            html.A(
-                html.Button("Traffic Heatmap", style={
-                    "fontSize": "16px",
-                    "padding": "12px 24px",
-                    "background": "linear-gradient(135deg, #f093fb 0%, #f5576c 100%)",
-                    "color": "white",
-                    "border": "none",
-                    "borderRadius": "8px",
-                    "cursor": "pointer",
-                    "fontWeight": "600",
-                    "boxShadow": "0 4px 15px rgba(0,0,0,0.2)",
-                    "transition": "all 0.3s ease",
-                }),
-                href="http://127.0.0.1:8052",
-            ),
+                html.Div([
+                    html.Label("Location:", style={
+                        "color": "white",
+                        "marginRight": "10px",
+                        "fontSize": "13px",
+                        "fontWeight": "600"
+                    }),
+                    dcc.Dropdown(
+                        id="location-selector",
+                        options=[],
+                        value="all",
+                        clearable=False,
+                        style={"width": "220px", "display": "inline-block"}
+                    ),
+                ], style={"marginRight": "14px", "display": "flex", "alignItems": "center"}),
+
+                # move nav group left + formal style
+                html.Div([
+                    html.A(
+                        html.Button("Home", style={
+                            "fontSize": "14px",
+                            "padding": "10px 18px",
+                            "background": "white",
+                            "color": CALTRANS_BLUE,
+                            "border": f"1px solid {CALTRANS_BLUE}",
+                            "borderRadius": "4px",
+                            "cursor": "pointer",
+                            "fontWeight": "700",
+                        }),
+                        href="http://127.0.0.1:8050",
+                    ),
+                    html.A(
+                        html.Button("View All Incidents", style={
+                            "fontSize": "14px",
+                            "padding": "10px 18px",
+                            "background": CALTRANS_BLUE,
+                            "color": "white",
+                            "border": f"1px solid {CALTRANS_BLUE}",
+                            "borderRadius": "4px",
+                            "cursor": "pointer",
+                            "fontWeight": "700",
+                        }),
+                        href="http://127.0.0.1:8051",
+                    ),
+                    html.A(
+                        html.Button("Traffic Heatmap", style={
+                            "fontSize": "14px",
+                            "padding": "10px 18px",
+                            "background": CALTRANS_GREEN,
+                            "color": "white",
+                            "border": f"1px solid {CALTRANS_GREEN}",
+                            "borderRadius": "4px",
+                            "cursor": "pointer",
+                            "fontWeight": "700",
+                        }),
+                        href="http://127.0.0.1:8052",
+                    ),
+                ], style={"display": "flex", "gap": "8px", "marginRight": "18px"}),
+            ], style={"display": "flex", "alignItems": "center"}),
         ], style={
             "display": "flex",
             "alignItems": "center",
             "justifyContent": "space-between",
-            "padding": "20px 30px",
-            "background": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
-            "borderRadius": "12px",
+            "padding": "28px 30px",
+            "background": CALTRANS_BLUE,
+            "borderRadius": "4px",
             "marginBottom": "20px",
-            "boxShadow": "0 4px 20px rgba(0,0,0,0.1)"
+            "boxShadow": "0 4px 15px rgba(0,0,0,0.1)",
+            "borderBottom": f"6px solid {CALTRANS_GREEN}"
         }),
         
         # Stats bar
