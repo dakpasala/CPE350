@@ -25,6 +25,10 @@ API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 HOST = os.getenv("VIEWER_HOST", "127.0.0.1")
 PORT = int(os.getenv("VIEWER_PORT", "8051"))
 
+# Caltrans Colors
+CALTRANS_BLUE = "#003366"
+CALTRANS_GREEN = "#007B5F"
+
 TIME_RANGES = {
     "Last Hour": 60,
     "Last 6 Hours": 360,
@@ -233,22 +237,21 @@ body { margin: 0; padding: 0; overflow-x: hidden; }
     align-items: center;
     gap: 10px;
     padding: 8px 18px;
-    border-radius: 50px;
-    border: 2px solid rgba(0,0,0,0.12);
-    background: #ffffff;
+    border-radius: 4px;
+    border: 2px solid rgba(255,255,255,0.2);
+    background: rgba(255,255,255,0.1);
     cursor: pointer;
     font-size: 14px;
     font-weight: 600;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    color: #333;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+    color: white;
+    box-shadow: none;
     transition: all 0.25s ease;
     user-select: none;
     white-space: nowrap;
 }
 .theme-toggle-btn:hover {
-    box-shadow: 0 4px 16px rgba(0,0,0,0.18);
-    transform: translateY(-1px);
+    background: rgba(255,255,255,0.2);
 }
 .theme-toggle-btn .toggle-track {
     width: 38px;
@@ -260,7 +263,7 @@ body { margin: 0; padding: 0; overflow-x: hidden; }
     flex-shrink: 0;
 }
 .theme-toggle-btn .toggle-track.active {
-    background: #667eea;
+    background: #007B5F;
 }
 .theme-toggle-btn .toggle-thumb {
     width: 18px;
@@ -510,72 +513,76 @@ def make_layout():
                 html.H2("TRAFFIC INCIDENT VIEWER", style={
                     "color": "white",
                     "margin": "0",
-                    "fontSize": "28px",
-                    "fontWeight": "bold",
-                    "textShadow": "2px 2px 4px rgba(0,0,0,0.3)"
+                    "fontSize": "30px",
+                    "fontWeight": "800",
+                    "letterSpacing": "1.2px"
                 }),
-                html.P("Browse and review recorded incident footage", style={
+                html.Div(style={
+                    "width": "44px",
+                    "height": "4px",
+                    "background": CALTRANS_GREEN,
+                    "margin": "10px 0 8px 0"
+                }),
+                html.P("DIVISION OF TRAFFIC OPERATIONS • INCIDENT REVIEW", style={
                     "color": "rgba(255,255,255,0.9)",
-                    "margin": "5px 0 0 0",
-                    "fontSize": "14px"
+                    "margin": "0",
+                    "fontSize": "12px",
+                    "letterSpacing": "1.4px",
+                    "fontWeight": "500"
                 }),
             ], style={"flex": "1"}),
 
-            # FIX 2: All nav buttons navigate in the same tab (no target="_blank")
             html.Div([
                 html.A(
-                    html.Button("← Home", style={
-                        "fontSize": "15px",
-                        "padding": "10px 20px",
+                    html.Button("Home", style={
+                        "fontSize": "14px",
+                        "padding": "10px 18px",
                         "background": "white",
-                        "color": "#667eea",
-                        "border": "2px solid white",
-                        "borderRadius": "8px",
+                        "color": CALTRANS_BLUE,
+                        "border": f"1px solid {CALTRANS_BLUE}",
+                        "borderRadius": "4px",
                         "cursor": "pointer",
-                        "fontWeight": "600",
-                        "marginRight": "10px",
+                        "fontWeight": "700",
                     }),
                     href="http://127.0.0.1:8050",
                 ),
                 html.A(
                     html.Button("Live Feed", style={
-                        "fontSize": "15px",
-                        "padding": "10px 20px",
-                        "background": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+                        "fontSize": "14px",
+                        "padding": "10px 18px",
+                        "background": CALTRANS_BLUE,
                         "color": "white",
-                        "border": "none",
-                        "borderRadius": "8px",
+                        "border": f"1px solid {CALTRANS_BLUE}",
+                        "borderRadius": "4px",
                         "cursor": "pointer",
-                        "fontWeight": "600",
-                        "marginRight": "10px",
-                        "boxShadow": "0 4px 15px rgba(0,0,0,0.2)",
+                        "fontWeight": "700",
                     }),
                     href="http://127.0.0.1:8053",
                 ),
                 html.A(
                     html.Button("Traffic Heatmap", style={
-                        "fontSize": "15px",
-                        "padding": "10px 20px",
-                        "background": "linear-gradient(135deg, #f093fb 0%, #f5576c 100%)",
+                        "fontSize": "14px",
+                        "padding": "10px 18px",
+                        "background": CALTRANS_GREEN,
                         "color": "white",
-                        "border": "none",
-                        "borderRadius": "8px",
+                        "border": f"1px solid {CALTRANS_GREEN}",
+                        "borderRadius": "4px",
                         "cursor": "pointer",
-                        "fontWeight": "600",
-                        "boxShadow": "0 4px 15px rgba(0,0,0,0.2)",
+                        "fontWeight": "700",
                     }),
                     href="http://127.0.0.1:8052",
                 ),
-            ], style={"display": "flex", "alignItems": "center"}),
+            ], style={"display": "flex", "gap": "8px", "marginRight": "18px", "alignItems": "center"}),
         ], style={
             "display": "flex",
             "alignItems": "center",
             "justifyContent": "space-between",
-            "padding": "20px 30px",
-            "background": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
-            "borderRadius": "12px",
+            "padding": "28px 30px",
+            "background": CALTRANS_BLUE,
+            "borderRadius": "4px",
             "marginBottom": "24px",
-            "boxShadow": "0 4px 20px rgba(0,0,0,0.1)"
+            "boxShadow": "0 4px 15px rgba(0,0,0,0.1)",
+            "borderBottom": f"6px solid {CALTRANS_GREEN}"
         }),
 
         # ---- Tab bar ----
