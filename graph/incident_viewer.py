@@ -157,8 +157,8 @@ def build_video_card(video):
             style={
                 "width": "100%", "padding": "10px", "fontSize": "14px", "fontWeight": "600",
                 "borderRadius": "8px", "border": "none",
-                "background": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
-                "color": "white", "cursor": "pointer", "boxShadow": "0 4px 12px rgba(102,126,234,0.3)",
+                "background": CALTRANS_BLUE,  # changed from purple gradient
+                "color": "white", "cursor": "pointer", "boxShadow": "0 4px 12px rgba(0,51,102,0.28)",
             }
         ),
     ], className="video-card", style={
@@ -201,8 +201,8 @@ def build_incident_card(incident):
             style={
                 "width": "100%", "padding": "10px 20px", "fontSize": "14px", "fontWeight": "600",
                 "borderRadius": "8px", "border": "none",
-                "background": "linear-gradient(135deg, #f093fb 0%, #f5576c 100%)",
-                "color": "white", "cursor": "pointer", "boxShadow": "0 4px 12px rgba(245,87,108,0.3)",
+                "background": CALTRANS_GREEN,  # changed from pink gradient
+                "color": "white", "cursor": "pointer", "boxShadow": "0 4px 12px rgba(0,123,95,0.28)",
             }
         ),
     ], className="incident-card", style={
@@ -300,11 +300,11 @@ body { margin: 0; padding: 0; overflow-x: hidden; }
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 .tab-btn.active {
-    border-bottom-color: #667eea;
-    color: #667eea;
+    border-bottom-color: #003366;  /* changed from #667eea */
+    color: #003366;                 /* changed from #667eea */
 }
 .tab-btn:hover {
-    color: #667eea;
+    color: #003366;                 /* changed from #667eea */
 }
 
 /* Dark mode overrides via data-theme attribute */
@@ -320,7 +320,7 @@ body { margin: 0; padding: 0; overflow-x: hidden; }
     color: #aaa;
 }
 [data-theme="dark"] .tab-btn.active {
-    color: #667eea;
+    color: #7fb3ff; /* brighter blue for dark mode readability */
 }
 [data-theme="dark"] .tab-section-title {
     color: #e0e0e0 !important;
@@ -632,7 +632,7 @@ def make_layout():
                         "justifyContent": "space-between",
                         "alignItems": "center",
                         "padding": "20px 24px",
-                        "background": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+                        "background": CALTRANS_BLUE,  # changed from purple gradient
                     }),
                     html.Div(id="video-player-content", style={"padding": "24px"}),
                 ], style={
@@ -828,8 +828,8 @@ def render_tab_content(tab):
                     html.Button("Search Incidents", id="search-incidents-btn", n_clicks=0, style={
                         "width": "100%", "padding": "10px 20px", "fontSize": "14px", "fontWeight": "700",
                         "borderRadius": "8px", "border": "none",
-                        "background": "linear-gradient(135deg, #f093fb 0%, #f5576c 100%)",
-                        "color": "white", "cursor": "pointer", "boxShadow": "0 4px 12px rgba(245,87,108,0.3)",
+                        "background": CALTRANS_GREEN,  # changed from pink gradient
+                        "color": "white", "cursor": "pointer", "boxShadow": "0 4px 12px rgba(0,123,95,0.28)",
                     }),
                 ], style={"minWidth": "160px"}),
             ], style={"display": "flex", "gap": "16px", "marginBottom": "28px", "flexWrap": "wrap", "alignItems": "flex-end"}),
@@ -858,8 +858,8 @@ def render_tab_content(tab):
                     html.Button("Search Videos", id="search-videos-btn", n_clicks=0, style={
                         "width": "100%", "padding": "10px 20px", "fontSize": "14px", "fontWeight": "700",
                         "borderRadius": "8px", "border": "none",
-                        "background": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
-                        "color": "white", "cursor": "pointer", "boxShadow": "0 4px 12px rgba(102,126,234,0.3)",
+                        "background": CALTRANS_BLUE,  # changed from purple gradient
+                        "color": "white", "cursor": "pointer", "boxShadow": "0 4px 12px rgba(0,51,102,0.28)",
                     }),
                 ], style={"minWidth": "160px"}),
             ], style={"display": "flex", "gap": "16px", "marginBottom": "28px", "flexWrap": "wrap", "alignItems": "flex-end"}),
@@ -873,9 +873,9 @@ def render_tab_content(tab):
             html.Button("↻ Refresh", id="refresh-latest-btn", n_clicks=0, style={
                 "padding": "10px 24px", "fontSize": "14px", "fontWeight": "700",
                 "borderRadius": "8px", "border": "none",
-                "background": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+                "background": CALTRANS_BLUE,  # changed from purple gradient
                 "color": "white", "cursor": "pointer", "marginBottom": "24px",
-                "boxShadow": "0 4px 12px rgba(102,126,234,0.3)",
+                "boxShadow": "0 4px 12px rgba(0,51,102,0.28)",
             }),
             html.Div(id="latest-video-container"),
         ])
@@ -906,7 +906,7 @@ def search_incidents(n_clicks, minutes, location):
     return html.Div([
         html.Div(
             f"Found {len(incidents)} incidents in the last {minutes} minutes",
-            style={"fontWeight": "700", "fontSize": "16px", "marginBottom": "20px", "color": "#f5576c"}
+            style={"fontWeight": "700", "fontSize": "16px", "marginBottom": "20px", "color": CALTRANS_GREEN}
         ),
         html.Div(cards, style={"display": "grid", "gridTemplateColumns": "repeat(auto-fill, minmax(280px, 1fr))", "gap": "16px"}),
     ])
@@ -933,7 +933,7 @@ def search_videos(n_clicks, minutes, location):
     return html.Div([
         html.Div(
             f"Found {len(videos)} videos",
-            style={"fontWeight": "700", "fontSize": "16px", "marginBottom": "20px", "color": "#667eea"}
+            style={"fontWeight": "700", "fontSize": "16px", "marginBottom": "20px", "color": CALTRANS_BLUE}
         ),
         html.Div(cards, style={"display": "grid", "gridTemplateColumns": "repeat(auto-fill, minmax(280px, 1fr))", "gap": "16px"}),
     ])
