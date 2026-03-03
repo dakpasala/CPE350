@@ -376,7 +376,7 @@ body { margin: 0; padding: 0; overflow-x: hidden; }
 [data-theme="dark"] .controls-panel label {
     color: #aaa !important;
 }
-[data-theme="dark"] .controls-panel .rc-slider-track { background: #667eea; }
+[data-theme="dark"] .controls-panel .rc-slider-track { background: #003366; }  /* was purple */
 [data-theme="dark"] .controls-panel .rc-slider-rail { background: #404040; }
 [data-theme="dark"] #offset-display {
     color: #999 !important;
@@ -702,7 +702,7 @@ def main():
                         "fontSize": "15px",
                         "borderRadius": "6px",
                         "border": "none",
-                        "background": "#4CAF50",
+                        "background": CALTRANS_BLUE,  # was #4CAF50
                         "color": "white",
                         "cursor": "pointer",
                         "fontWeight": "500"
@@ -751,18 +751,6 @@ def main():
             "border": "1px solid #e0e0e0"
         }),
         
-        dcc.Interval(id="animation-interval", interval=FRAME_INTERVAL_MS, n_intervals=0),
-        dcc.Interval(id="reload-interval", interval=1000, n_intervals=0),
-        
-        dcc.Store(id="data-store", data=data),
-        dcc.Store(id="current-frame", data=0),
-        dcc.Store(id="playing", data=True),
-        dcc.Store(id="alert-active", data=False),
-        dcc.Store(id="last-alerted-data-id", data=None),
-        dcc.Store(id="current-incident-id", data=None),
-        dcc.Store(id="raw-data-store", data=None),
-        dcc.Store(id="theme-store", data="light"),
-
         # Incident modal
         html.Div(
             id="incident-modal",
@@ -783,7 +771,7 @@ def main():
                             html.H2("Incident Detected", style={"margin": "0", "color": "white", "fontSize": "24px"}),
                         ], style={
                             "padding": "20px 30px",
-                            "background": "linear-gradient(135deg, #f093fb 0%, #f5576c 100%)",
+                            "background": CALTRANS_BLUE,  # was pink/purple gradient
                         }),
                         html.Div([
                             html.Div(id="incident-modal-text", style={"marginBottom": "20px"}),
@@ -795,12 +783,12 @@ def main():
                                 "fontSize": "16px",
                                 "borderRadius": "8px",
                                 "border": "none",
-                                "background": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+                                "background": CALTRANS_BLUE,  # was purple gradient
                                 "color": "white",
                                 "cursor": "pointer",
                                 "fontWeight": "600",
                                 "marginRight": "10px",
-                                "boxShadow": "0 4px 15px rgba(0,0,0,0.2)"
+                                "boxShadow": "0 4px 15px rgba(0,51,102,0.28)"
                             }),
                             html.Button("Dismiss", id="incident-ok-btn", n_clicks=0, style={
                                 "padding": "12px 24px",
@@ -975,10 +963,10 @@ def main():
                 f"{incident_count} Incidents",
                 style={
                     "fontWeight": "bold",
-                    "color": "#f5576c" if incident_count > 0 else "#4CAF50",
+                    "color": "#f5576c" if incident_count > 0 else CALTRANS_GREEN,  # was #4CAF50
                     "padding": "6px 12px",
                     "borderRadius": "6px",
-                    "background": "rgba(245, 87, 108, 0.1)" if incident_count > 0 else "rgba(76, 175, 80, 0.1)"
+                    "background": "rgba(245, 87, 108, 0.1)" if incident_count > 0 else "rgba(0, 123, 95, 0.12)"
                 }
             ),
         ])
