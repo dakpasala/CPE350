@@ -39,6 +39,10 @@ MAP_STYLE = "mapbox://styles/mapbox/satellite-streets-v12"
 HOST = os.getenv("HOST", "127.0.0.1")
 PORT = int(os.getenv("PORT", "8050"))
 
+# Caltrans Colors
+CALTRANS_BLUE = "#003366"
+CALTRANS_GREEN = "#007B5F"
+
 COLOR_MAP = {
     "car": "rgb(255,0,0)",
     "truck": "rgb(255,140,0)",
@@ -211,22 +215,20 @@ body { margin: 0; padding: 0; overflow-x: hidden; }
     align-items: center;
     gap: 10px;
     padding: 8px 18px;
-    border-radius: 50px;
-    border: 2px solid rgba(0,0,0,0.12);
-    background: #ffffff;
+    border-radius: 4px; /* Formality adjustment */
+    border: 2px solid rgba(255,255,255,0.2);
+    background: rgba(255,255,255,0.1);
     cursor: pointer;
     font-size: 14px;
     font-weight: 600;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    color: #333;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+    color: white;
     transition: all 0.25s ease;
     user-select: none;
     white-space: nowrap;
 }
 .theme-toggle-btn:hover {
-    box-shadow: 0 4px 16px rgba(0,0,0,0.18);
-    transform: translateY(-1px);
+    background: rgba(255,255,255,0.2);
 }
 .theme-toggle-btn .toggle-track {
     width: 38px;
@@ -238,7 +240,7 @@ body { margin: 0; padding: 0; overflow-x: hidden; }
     flex-shrink: 0;
 }
 .theme-toggle-btn .toggle-track.active {
-    background: #667eea;
+    background: #007B5F;
 }
 .theme-toggle-btn .toggle-thumb {
     width: 18px;
@@ -255,18 +257,10 @@ body { margin: 0; padding: 0; overflow-x: hidden; }
     transform: translateX(16px);
 }
 
-/* dark mode button variant */
-.theme-toggle-btn.dark-mode {
-    background: #2d2d2d;
-    border-color: rgba(255,255,255,0.15);
-    color: #e0e0e0;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.4);
-}
-
 .camera-card:hover {
     transform: translateY(-5px);
-    box-shadow: 0 8px 30px rgba(102, 126, 234, 0.3) !important;
-    border-color: #667eea !important;
+    box-shadow: 0 8px 30px rgba(0, 51, 102, 0.2) !important;
+    border-color: #003366 !important;
 }
 """
 
@@ -307,14 +301,12 @@ def make_theme_toggle(toggle_id="theme-toggle"):
     return html.Div(
         id=f"{toggle_id}-wrapper",
         children=[
-            # Hidden checklist to track state (Dash state management)
             dcc.Checklist(
                 id=toggle_id,
                 options=[{"label": "", "value": "dark"}],
                 value=[],
                 style={"display": "none"},
             ),
-            # Visual button (clientside will wire clicks)
             html.Button(
                 id=f"{toggle_id}-btn",
                 children=[
@@ -329,8 +321,8 @@ def make_theme_toggle(toggle_id="theme-toggle"):
         ],
         style={
             "position": "fixed",
-            "top": "20px",
-            "right": "20px",
+            "top": "25px",
+            "right": "30px",
             "zIndex": 10000,
         }
     )
@@ -346,27 +338,36 @@ def main():
     app.layout = html.Div([
         make_theme_toggle("theme-toggle"),
         
-        # Header
+        # --- RE-STYLED HEADER FOR CALTRANS ---
         html.Div([
             html.H1("LIVE TRAFFIC MONITORING", style={
                 "color": "white",
                 "margin": "0",
-                "fontSize": "36px",
-                "fontWeight": "bold",
-                "textShadow": "2px 2px 4px rgba(0,0,0,0.3)"
+                "fontSize": "32px",
+                "fontWeight": "800",
+                "letterSpacing": "1.5px"
             }),
-            html.P("Multi-Camera Security Dashboard", style={
+            html.Div(style={
+                "width": "50px", 
+                "height": "4px", 
+                "background": CALTRANS_GREEN, 
+                "margin": "15px auto"
+            }),
+            html.P("DIVISION OF TRAFFIC OPERATIONS • MULTI-CAMERA SECURITY DASHBOARD", style={
                 "color": "rgba(255,255,255,0.9)",
-                "margin": "10px 0 0 0",
-                "fontSize": "16px"
+                "margin": "0",
+                "fontSize": "13px",
+                "letterSpacing": "2px",
+                "fontWeight": "500"
             }),
         ], style={
-            "padding": "30px",
-            "background": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
-            "borderRadius": "12px",
+            "padding": "45px 30px",
+            "background": CALTRANS_BLUE,
+            "borderRadius": "4px",
             "marginBottom": "30px",
-            "boxShadow": "0 4px 20px rgba(0,0,0,0.1)",
-            "textAlign": "center"
+            "boxShadow": "0 4px 15px rgba(0,0,0,0.1)",
+            "textAlign": "center",
+            "borderBottom": f"6px solid {CALTRANS_GREEN}"
         }),
         
         # Camera Grid
@@ -382,7 +383,7 @@ def main():
         dcc.Store(id="theme-store", data="light"),
         
         html.Div(
-            f"Security Dashboard • http://{HOST}:{PORT}",
+            f"Official System Dashboard • http://{HOST}:{PORT}",
             style={"textAlign": "center", "color": "#999", "fontSize": "13px", "marginTop": "20px"}
         ),
     ], id="main-container", className="main-container")
@@ -405,7 +406,7 @@ def main():
         prevent_initial_call=True,
     )
 
-    # FIX 1: Load theme from cookie on page mount
+    # Load theme from cookie on page mount
     app.clientside_callback(
         """
         function(id) {
@@ -436,11 +437,9 @@ def main():
                 if (isDark) {
                     track.classList.add('active');
                     label.textContent = 'Theme: Dark';
-                    btn.classList.add('dark-mode');
                 } else {
                     track.classList.remove('active');
                     label.textContent = 'Theme: Light';
-                    btn.classList.remove('dark-mode');
                 }
             }
             return theme;
@@ -449,11 +448,6 @@ def main():
         Output("theme-store", "data"),
         Input("theme-toggle", "value"),
     )
-
-
-    # Theme changes are handled purely via CSS [data-theme] selectors.
-    # The inline script sets data-theme from localStorage immediately on load (no flash).
-    # This callback just keeps the theme-store in sync for any server-side callbacks that need it.
 
 
     @app.callback(
@@ -480,12 +474,13 @@ def main():
         if not cameras:
             return html.Div([
                 html.Div([
-                    html.H2("No Active Cameras", style={
-                        "color": "#999" if is_dark else "#666",
+                    html.H2("System Standby", style={
+                        "color": CALTRANS_BLUE if not is_dark else "#999",
                         "marginBottom": "10px",
-                        "fontSize": "28px"
+                        "fontSize": "28px",
+                        "fontWeight": "700"
                     }),
-                    html.P("Waiting for camera data...", style={
+                    html.P("Waiting for camera telemetry...", style={
                         "color": "#777" if is_dark else "#999",
                         "fontSize": "16px"
                     }),
@@ -493,7 +488,7 @@ def main():
                         "width": "50px",
                         "height": "50px",
                         "border": "5px solid #404040" if is_dark else "5px solid #f3f3f3",
-                        "borderTop": "5px solid #667eea",
+                        "borderTop": f"5px solid {CALTRANS_GREEN}",
                         "borderRadius": "50%",
                         "animation": "spin 1s linear infinite",
                         "margin": "20px auto"
@@ -501,10 +496,11 @@ def main():
                 ], style={
                     "background": bg_color,
                     "padding": "60px",
-                    "borderRadius": "12px",
+                    "borderRadius": "4px",
                     "boxShadow": "0 4px 20px rgba(0,0,0,0.1)",
                     "textAlign": "center",
-                    "gridColumn": "1 / -1"
+                    "gridColumn": "1 / -1",
+                    "border": f"1px solid {border_color}"
                 })
             ])
         
@@ -517,19 +513,17 @@ def main():
             incident_count = len(incidents)
             
             is_live = len(vehicles) > 0
-            status_color = "#4CAF50" if is_live else "#999"
+            status_color = CALTRANS_GREEN if is_live else "#999"
             status_text = "LIVE" if is_live else "NO DATA"
             
             preview_fig = build_preview_map(vehicles, incidents, location)
             
-            # FIX 2: Use onclick navigation instead of <a href target="_blank">
-            # so camera cards open in the same tab.
             card = html.Div([
                 html.Div([
                     html.H3(location.upper(), style={
                         "margin": "0",
-                        "fontSize": "18px",
-                        "fontWeight": "600",
+                        "fontSize": "16px",
+                        "fontWeight": "700",
                         "color": text_color
                     }),
                     html.Div([
@@ -542,7 +536,7 @@ def main():
                     "alignItems": "center",
                     "marginBottom": "12px",
                     "paddingBottom": "12px",
-                    "borderBottom": f"2px solid {border_color}"
+                    "borderBottom": f"1px solid {border_color}"
                 }),
                 
                 html.Div([
@@ -552,7 +546,7 @@ def main():
                         style={"height": "180px", "width": "100%"}
                     ),
                 ], style={
-                    "borderRadius": "8px",
+                    "borderRadius": "2px",
                     "overflow": "hidden",
                     "marginBottom": "12px",
                     "background": "#1a1a1a" if is_dark else "#f8f9fa"
@@ -560,21 +554,21 @@ def main():
                 
                 html.Div([
                     html.Div([
-                        html.Span(str(unique_vehicles), style={"fontSize": "20px", "fontWeight": "bold", "color": "#667eea"}),
+                        html.Span(str(unique_vehicles), style={"fontSize": "20px", "fontWeight": "bold", "color": CALTRANS_BLUE if not is_dark else "#667eea"}),
                         html.Span(" Vehicles", style={"fontSize": "13px", "color": "#999" if is_dark else "#666", "marginLeft": "5px"}),
                     ], style={"marginBottom": "6px"}),
                     html.Div([
                         html.Span(str(incident_count), style={
                             "fontSize": "20px",
                             "fontWeight": "bold",
-                            "color": "#f5576c" if incident_count > 0 else "#4CAF50"
+                            "color": "#f5576c" if incident_count > 0 else CALTRANS_GREEN
                         }),
                         html.Span(" Incidents", style={"fontSize": "13px", "color": "#999" if is_dark else "#666", "marginLeft": "5px"}),
                     ]),
                 ], style={
                     "padding": "12px",
                     "background": "#1a1a1a" if is_dark else "#f8f9fa",
-                    "borderRadius": "8px"
+                    "borderRadius": "4px"
                 }),
             ],
             id={"type": "camera-card", "location": location},
@@ -582,9 +576,9 @@ def main():
             style={
                 "background": bg_color,
                 "padding": "16px",
-                "borderRadius": "12px",
-                "boxShadow": "0 4px 20px rgba(0,0,0,0.3)" if is_dark else "0 4px 20px rgba(0,0,0,0.08)",
-                "border": f"2px solid {border_color}",
+                "borderRadius": "4px",
+                "boxShadow": "0 2px 10px rgba(0,0,0,0.05)",
+                "border": f"1px solid {border_color}",
                 "transition": "all 0.3s ease",
                 "cursor": "pointer",
             },
@@ -594,7 +588,7 @@ def main():
         
         return camera_cards
 
-    # FIX 2: Navigate in the same tab when a camera card is clicked.
+    # Navigate in the same tab when a camera card is clicked.
     app.clientside_callback(
         """
         function(n_clicks_list, cameras) {
@@ -620,12 +614,6 @@ def main():
         prevent_initial_call=True,
     )
 
-    print("\n" + "=" * 60)
-    print("Security Dashboard - Multi-Camera View")
-    print("=" * 60)
-    print(f"Open: http://{HOST}:{PORT}")
-    print("=" * 60 + "\n")
-    
     app.run(debug=False, host=HOST, port=PORT, use_reloader=False)
 
 
