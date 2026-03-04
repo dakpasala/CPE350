@@ -58,6 +58,10 @@ COLOR_MAP = {
 DEFAULT_COLOR = "rgb(0,128,255)"
 INCIDENT_COLOR = "rgb(255,0,255)"
 
+# Caltrans Colors (matching dashboard.py)
+CALTRANS_BLUE = "#003366"
+CALTRANS_GREEN = "#007B5F"
+
 
 # =========================
 # Data Processing
@@ -289,7 +293,6 @@ def build_figure(center, frame_vehicles, all_vehicles, incidents, lat_off=0.0, l
 TOGGLE_CSS = """
 body { margin: 0; padding: 0; overflow-x: hidden; }
 
-/* Main container themed via CSS — no inline style override */
 .main-container {
     padding: 30px;
     background: #f5f7fa;
@@ -313,22 +316,20 @@ body { margin: 0; padding: 0; overflow-x: hidden; }
     align-items: center;
     gap: 10px;
     padding: 8px 18px;
-    border-radius: 50px;
-    border: 2px solid rgba(0,0,0,0.12);
-    background: #ffffff;
+    border-radius: 4px;
+    border: 2px solid rgba(255,255,255,0.2);
+    background: rgba(255,255,255,0.1);
     cursor: pointer;
     font-size: 14px;
     font-weight: 600;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    color: #333;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+    color: white;
     transition: all 0.25s ease;
     user-select: none;
     white-space: nowrap;
 }
 .theme-toggle-btn:hover {
-    box-shadow: 0 4px 16px rgba(0,0,0,0.18);
-    transform: translateY(-1px);
+    background: rgba(255,255,255,0.2);
 }
 .theme-toggle-btn .toggle-track {
     width: 38px;
@@ -340,7 +341,7 @@ body { margin: 0; padding: 0; overflow-x: hidden; }
     flex-shrink: 0;
 }
 .theme-toggle-btn .toggle-track.active {
-    background: #667eea;
+    background: #007B5F;
 }
 .theme-toggle-btn .toggle-thumb {
     width: 18px;
@@ -356,12 +357,6 @@ body { margin: 0; padding: 0; overflow-x: hidden; }
 .theme-toggle-btn .toggle-track.active .toggle-thumb {
     transform: translateX(16px);
 }
-.theme-toggle-btn.dark-mode {
-    background: #2d2d2d;
-    border-color: rgba(255,255,255,0.15);
-    color: #e0e0e0;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.4);
-}
 
 /* ---- Dark mode for map_viewer components ---- */
 [data-theme="dark"] #stats-bar {
@@ -370,7 +365,7 @@ body { margin: 0; padding: 0; overflow-x: hidden; }
     color: #e0e0e0 !important;
 }
 [data-theme="dark"] #time-display {
-    color: #e0e0e0 !important;
+    color: #90aac8 !important;
 }
 [data-theme="dark"] .controls-panel {
     background: #2d2d2d !important;
@@ -380,7 +375,7 @@ body { margin: 0; padding: 0; overflow-x: hidden; }
 [data-theme="dark"] .controls-panel label {
     color: #aaa !important;
 }
-[data-theme="dark"] .controls-panel .rc-slider-track { background: #667eea; }
+[data-theme="dark"] .controls-panel .rc-slider-track { background: #007B5F; }
 [data-theme="dark"] .controls-panel .rc-slider-rail { background: #404040; }
 [data-theme="dark"] #offset-display {
     color: #999 !important;
@@ -415,7 +410,7 @@ body { margin: 0; padding: 0; overflow-x: hidden; }
     border-color: #404040 !important;
 }
 
-/* Force location dropdown in header to always be light */
+/* Force location dropdown in sub-header to always be light */
 #location-selector .Select-control {
     background: white !important;
     border-color: #e0e0e0 !important;
@@ -443,8 +438,6 @@ body { margin: 0; padding: 0; overflow-x: hidden; }
 }
 """
 
-# FIX 1: No forced dark-mode application in the inline script — theme is applied
-# after React mounts via the clientside callback, eliminating the flash.
 TOGGLE_JS = """
 window.DASHBOARD_THEME_KEY = 'dashboard_theme';
 (function() {
@@ -501,8 +494,8 @@ def make_theme_toggle(toggle_id="theme-toggle"):
         ],
         style={
             "position": "fixed",
-            "top": "20px",
-            "right": "20px",
+            "top": "25px",
+            "right": "30px",
             "zIndex": 10000,
         }
     )
@@ -534,107 +527,127 @@ def main():
     app.layout = html.Div([
         make_theme_toggle("theme-toggle"),
         
-        # Header
+        # ── Main header — Caltrans style matching dashboard.py ──
         html.Div([
-            html.Div([
-                html.H2("LIVE TRAFFIC MONITORING", style={
-                    "color": "white",
-                    "margin": "0",
-                    "fontSize": "28px",
-                    "fontWeight": "bold",
-                    "textShadow": "2px 2px 4px rgba(0,0,0,0.3)"
-                }),
-                html.P("Real-time incident detection", style={
-                    "color": "rgba(255,255,255,0.9)",
-                    "margin": "5px 0 0 0",
-                    "fontSize": "14px"
-                }),
-            ], style={"flex": "1"}),
-            
+            html.H1("LIVE TRAFFIC FEED", style={
+                "color": "white",
+                "margin": "0",
+                "fontSize": "32px",
+                "fontWeight": "800",
+                "letterSpacing": "1.5px",
+            }),
+            html.Div(style={
+                "width": "50px",
+                "height": "4px",
+                "background": CALTRANS_GREEN,
+                "margin": "12px auto",
+            }),
+            html.P("DIVISION OF TRAFFIC OPERATIONS • REAL-TIME INCIDENT DETECTION", style={
+                "color": "rgba(255,255,255,0.9)",
+                "margin": "0",
+                "fontSize": "13px",
+                "letterSpacing": "2px",
+                "fontWeight": "500",
+            }),
+        ], style={
+            "padding": "35px 30px",
+            "background": CALTRANS_BLUE,
+            "borderRadius": "4px 4px 0 0",
+            "boxShadow": "0 4px 15px rgba(0,0,0,0.1)",
+            "textAlign": "center",
+            "borderBottom": f"6px solid {CALTRANS_GREEN}",
+        }),
+
+        # ── Sub-header bar: location selector + nav buttons ──
+        html.Div([
             html.Div([
                 html.Label("Location:", style={
                     "color": "white",
                     "marginRight": "10px",
-                    "fontSize": "14px",
-                    "fontWeight": "600"
+                    "fontSize": "13px",
+                    "fontWeight": "600",
+                    "letterSpacing": "0.5px",
                 }),
                 dcc.Dropdown(
                     id="location-selector",
                     options=[],
                     value="all",
                     clearable=False,
-                    style={"width": "200px", "display": "inline-block"}
+                    style={"width": "180px", "display": "inline-block"}
                 ),
-            ], style={"marginRight": "20px", "display": "flex", "alignItems": "center"}),
-            
-            # FIX 2: All nav links use same-tab navigation (no target="_blank")
-            html.A(
-                html.Button("Home", style={
-                    "fontSize": "16px",
-                    "padding": "12px 24px",
-                    "background": "white",
-                    "color": "#667eea",
-                    "border": "2px solid white",
-                    "borderRadius": "8px",
-                    "cursor": "pointer",
-                    "fontWeight": "600",
-                    "boxShadow": "0 4px 15px rgba(0,0,0,0.2)",
-                    "transition": "all 0.3s ease",
-                    "marginRight": "10px",
-                }),
-                href="http://127.0.0.1:8050",
-            ),
-            html.A(
-                html.Button("View All Incidents", style={
-                    "fontSize": "16px",
-                    "padding": "12px 24px",
-                    "background": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
-                    "color": "white",
-                    "border": "none",
-                    "borderRadius": "8px",
-                    "cursor": "pointer",
-                    "fontWeight": "600",
-                    "boxShadow": "0 4px 15px rgba(0,0,0,0.2)",
-                    "transition": "all 0.3s ease",
-                    "marginRight": "10px",
-                }),
-                href="http://127.0.0.1:8051",
-            ),
-            html.A(
-                html.Button("Traffic Heatmap", style={
-                    "fontSize": "16px",
-                    "padding": "12px 24px",
-                    "background": "linear-gradient(135deg, #f093fb 0%, #f5576c 100%)",
-                    "color": "white",
-                    "border": "none",
-                    "borderRadius": "8px",
-                    "cursor": "pointer",
-                    "fontWeight": "600",
-                    "boxShadow": "0 4px 15px rgba(0,0,0,0.2)",
-                    "transition": "all 0.3s ease",
-                }),
-                href="http://127.0.0.1:8052",
-            ),
+            ], style={"display": "flex", "alignItems": "center"}),
+
+            html.Div([
+                html.A(
+                    html.Button("Home", style={
+                        "fontSize": "13px",
+                        "padding": "9px 20px",
+                        "background": "rgba(255,255,255,0.12)",
+                        "color": "white",
+                        "border": "1px solid rgba(255,255,255,0.3)",
+                        "borderRadius": "4px",
+                        "cursor": "pointer",
+                        "fontWeight": "600",
+                        "letterSpacing": "0.5px",
+                        "marginRight": "8px",
+                        "transition": "all 0.2s ease",
+                    }),
+                    href="http://127.0.0.1:8050",
+                ),
+                html.A(
+                    html.Button("All Incidents", style={
+                        "fontSize": "13px",
+                        "padding": "9px 20px",
+                        "background": CALTRANS_GREEN,
+                        "color": "white",
+                        "border": "none",
+                        "borderRadius": "4px",
+                        "cursor": "pointer",
+                        "fontWeight": "600",
+                        "letterSpacing": "0.5px",
+                        "marginRight": "8px",
+                        "transition": "all 0.2s ease",
+                    }),
+                    href="http://127.0.0.1:8051",
+                ),
+                html.A(
+                    html.Button("Traffic Heatmap", style={
+                        "fontSize": "13px",
+                        "padding": "9px 20px",
+                        "background": "rgba(255,255,255,0.15)",
+                        "color": "white",
+                        "border": "1px solid rgba(255,255,255,0.3)",
+                        "borderRadius": "4px",
+                        "cursor": "pointer",
+                        "fontWeight": "600",
+                        "letterSpacing": "0.5px",
+                        "transition": "all 0.2s ease",
+                    }),
+                    href="http://127.0.0.1:8052",
+                ),
+            ], style={"display": "flex", "alignItems": "center"}),
         ], style={
             "display": "flex",
             "alignItems": "center",
             "justifyContent": "space-between",
-            "padding": "20px 30px",
-            "background": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
-            "borderRadius": "12px",
+            "padding": "12px 24px",
+            "background": "#002a57",
+            "borderRadius": "0 0 4px 4px",
             "marginBottom": "20px",
-            "boxShadow": "0 4px 20px rgba(0,0,0,0.1)"
+            "boxShadow": "0 3px 10px rgba(0,0,0,0.15)",
         }),
         
         # Stats bar
         html.Div(id="stats-bar", style={
-            "fontSize": "16px",
+            "fontSize": "14px",
             "marginBottom": "15px",
-            "padding": "15px 20px",
+            "padding": "12px 20px",
             "background": "white",
-            "borderRadius": "10px",
+            "borderRadius": "4px",
             "boxShadow": "0 2px 10px rgba(0,0,0,0.05)",
-            "border": "1px solid #e0e0e0"
+            "border": "1px solid #e0e0e0",
+            "letterSpacing": "0.3px",
+            "fontWeight": "500",
         }),
         
         # Map
@@ -645,13 +658,18 @@ def main():
                 style={"display": "none"},
                 children=[
                     html.Div([
-                        html.H2("No Data Received", style={"color": "#666", "marginBottom": "10px", "fontSize": "32px"}),
+                        html.H2("System Standby", style={
+                            "color": CALTRANS_BLUE,
+                            "marginBottom": "10px",
+                            "fontSize": "28px",
+                            "fontWeight": "700",
+                        }),
                         html.P("Waiting for vehicle data from camera...", style={"color": "#999", "fontSize": "16px"}),
                         html.Div("", id="waiting-spinner", style={
                             "width": "50px",
                             "height": "50px",
                             "border": "5px solid #f3f3f3",
-                            "borderTop": "5px solid #667eea",
+                            "borderTop": f"5px solid {CALTRANS_GREEN}",
                             "borderRadius": "50%",
                             "animation": "spin 1s linear infinite",
                             "margin": "20px auto"
@@ -659,7 +677,7 @@ def main():
                     ], style={
                         "background": "white",
                         "padding": "40px",
-                        "borderRadius": "12px",
+                        "borderRadius": "4px",
                         "boxShadow": "0 4px 20px rgba(0,0,0,0.1)",
                         "textAlign": "center"
                     })
@@ -667,7 +685,7 @@ def main():
             )
         ], style={
             "height": "700px",
-            "borderRadius": "12px",
+            "borderRadius": "4px",
             "overflow": "hidden",
             "boxShadow": "0 4px 20px rgba(0,0,0,0.1)",
             "marginBottom": "20px",
@@ -678,49 +696,52 @@ def main():
         html.Div([
             html.Div([
                 html.Div(id="time-display", style={
-                    "fontSize": "20px",
-                    "fontWeight": "600",
+                    "fontSize": "15px",
+                    "fontWeight": "700",
                     "marginBottom": "15px",
-                    "color": "#333"
+                    "color": CALTRANS_BLUE,
+                    "letterSpacing": "0.5px",
                 }),
                 
                 html.Div([
                     html.Button("Pause", id="pause-btn", n_clicks=0, style={
                         "marginRight": "10px",
                         "padding": "10px 20px",
-                        "fontSize": "15px",
-                        "borderRadius": "6px",
+                        "fontSize": "13px",
+                        "borderRadius": "4px",
                         "border": "none",
-                        "background": "#f44336",
+                        "background": "#c0392b",
                         "color": "white",
                         "cursor": "pointer",
-                        "fontWeight": "500"
+                        "fontWeight": "600",
+                        "letterSpacing": "0.5px",
                     }),
                     html.Button("Resume", id="play-btn", n_clicks=0, style={
                         "padding": "10px 20px",
-                        "fontSize": "15px",
-                        "borderRadius": "6px",
+                        "fontSize": "13px",
+                        "borderRadius": "4px",
                         "border": "none",
-                        "background": "#4CAF50",
+                        "background": CALTRANS_GREEN,
                         "color": "white",
                         "cursor": "pointer",
-                        "fontWeight": "500"
+                        "fontWeight": "600",
+                        "letterSpacing": "0.5px",
                     }),
                 ], style={"marginBottom": "25px"}),
                 
                 html.Div([
                     html.Div([
-                        html.Label("Camera Pitch", style={"fontWeight": "600", "marginBottom": "8px", "display": "block", "color": "#555"}),
+                        html.Label("Camera Pitch", style={"fontWeight": "600", "marginBottom": "8px", "display": "block", "color": "#555", "fontSize": "13px", "letterSpacing": "0.5px"}),
                         dcc.Slider(0, 85, step=10, value=60, id="pitch-slider", marks={0: "0°", 45: "45°", 85: "85°"}),
                     ], style={"marginBottom": "20px"}),
                     
                     html.Div([
-                        html.Label("Camera Bearing", style={"fontWeight": "600", "marginBottom": "8px", "display": "block", "color": "#555"}),
+                        html.Label("Camera Bearing", style={"fontWeight": "600", "marginBottom": "8px", "display": "block", "color": "#555", "fontSize": "13px", "letterSpacing": "0.5px"}),
                         dcc.Slider(0, 360, step=15, value=30, id="bearing-slider", marks={0: "N", 90: "E", 180: "S", 270: "W"}),
                     ], style={"marginBottom": "20px"}),
                     
                     html.Div([
-                        html.Label("Latitude Offset", style={"fontWeight": "600", "marginBottom": "8px", "display": "block", "color": "#555"}),
+                        html.Label("Latitude Offset", style={"fontWeight": "600", "marginBottom": "8px", "display": "block", "color": "#555", "fontSize": "13px", "letterSpacing": "0.5px"}),
                         dcc.Slider(
                             id="lat-offset-slider",
                             min=-0.001, max=0.001, step=0.00001, value=0.0,
@@ -730,7 +751,7 @@ def main():
                     ], style={"marginBottom": "20px"}),
                     
                     html.Div([
-                        html.Label("Longitude Offset", style={"fontWeight": "600", "marginBottom": "8px", "display": "block", "color": "#555"}),
+                        html.Label("Longitude Offset", style={"fontWeight": "600", "marginBottom": "8px", "display": "block", "color": "#555", "fontSize": "13px", "letterSpacing": "0.5px"}),
                         dcc.Slider(
                             id="lon-offset-slider",
                             min=-0.001, max=0.001, step=0.00001, value=0.0,
@@ -739,13 +760,13 @@ def main():
                         ),
                     ], style={"marginBottom": "10px"}),
                     
-                    html.Div(id="offset-display", style={"fontSize": "13px", "color": "#777"}),
+                    html.Div(id="offset-display", style={"fontSize": "12px", "color": "#777", "letterSpacing": "0.3px"}),
                 ])
             ])
         ], className="controls-panel", style={
             "padding": "25px",
             "background": "white",
-            "borderRadius": "12px",
+            "borderRadius": "4px",
             "boxShadow": "0 2px 10px rgba(0,0,0,0.05)",
             "border": "1px solid #e0e0e0"
         }),
@@ -771,7 +792,7 @@ def main():
                     style={
                         "backgroundColor": "white",
                         "padding": "0px",
-                        "borderRadius": "16px",
+                        "borderRadius": "4px",
                         "width": "600px",
                         "maxWidth": "90vw",
                         "boxShadow": "0 20px 60px rgba(0,0,0,0.3)",
@@ -779,10 +800,17 @@ def main():
                     },
                     children=[
                         html.Div([
-                            html.H2("Incident Detected", style={"margin": "0", "color": "white", "fontSize": "24px"}),
+                            html.H2("Incident Detected", style={
+                                "margin": "0",
+                                "color": "white",
+                                "fontSize": "22px",
+                                "fontWeight": "700",
+                                "letterSpacing": "1px",
+                            }),
                         ], style={
                             "padding": "20px 30px",
-                            "background": "linear-gradient(135deg, #f093fb 0%, #f5576c 100%)",
+                            "background": CALTRANS_BLUE,
+                            "borderBottom": f"4px solid {CALTRANS_GREEN}",
                         }),
                         html.Div([
                             html.Div(id="incident-modal-text", style={"marginBottom": "20px"}),
@@ -790,26 +818,28 @@ def main():
                         ], style={"padding": "30px"}),
                         html.Div([
                             html.Button("Watch Video", id="watch-video-btn", n_clicks=0, style={
-                                "padding": "12px 24px",
-                                "fontSize": "16px",
-                                "borderRadius": "8px",
+                                "padding": "11px 24px",
+                                "fontSize": "14px",
+                                "borderRadius": "4px",
                                 "border": "none",
-                                "background": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+                                "background": CALTRANS_GREEN,
                                 "color": "white",
                                 "cursor": "pointer",
                                 "fontWeight": "600",
+                                "letterSpacing": "0.5px",
                                 "marginRight": "10px",
-                                "boxShadow": "0 4px 15px rgba(0,0,0,0.2)"
+                                "boxShadow": "0 4px 15px rgba(0,0,0,0.15)"
                             }),
                             html.Button("Dismiss", id="incident-ok-btn", n_clicks=0, style={
-                                "padding": "12px 24px",
-                                "fontSize": "16px",
-                                "borderRadius": "8px",
+                                "padding": "11px 24px",
+                                "fontSize": "14px",
+                                "borderRadius": "4px",
                                 "border": "2px solid #ddd",
                                 "background": "white",
                                 "color": "#666",
                                 "cursor": "pointer",
-                                "fontWeight": "600"
+                                "fontWeight": "600",
+                                "letterSpacing": "0.5px",
                             }),
                         ], style={
                             "padding": "20px 30px",
@@ -823,8 +853,8 @@ def main():
         ),
         
         html.Div(
-            f"{PLAYBACK_FPS} FPS Playback • http://{HOST}:{PORT}",
-            style={"marginTop": "20px", "textAlign": "center", "color": "#999", "fontSize": "13px"}
+            f"Official System Dashboard • {PLAYBACK_FPS} FPS Playback • http://{HOST}:{PORT}",
+            style={"marginTop": "20px", "textAlign": "center", "color": "#999", "fontSize": "12px", "letterSpacing": "0.5px"}
         ),
     ], id="main-container", className="main-container")
 
@@ -845,7 +875,6 @@ def main():
         prevent_initial_call=True,
     )
 
-    # FIX 1: Read cookie after React mounts
     app.clientside_callback(
         """
         function(id) {
@@ -874,11 +903,9 @@ def main():
                 if (isDark) {
                     track.classList.add('active');
                     label.textContent = 'Theme: Dark';
-                    btn.classList.add('dark-mode');
                 } else {
                     track.classList.remove('active');
                     label.textContent = 'Theme: Light';
-                    btn.classList.remove('dark-mode');
                 }
             }
             return theme;
@@ -887,9 +914,6 @@ def main():
         Output("theme-store", "data"),
         Input("theme-toggle", "value"),
     )
-
-    # main-container theming is handled by CSS [data-theme="dark"] .main-container
-    # The inline script sets data-theme from localStorage immediately — no flash.
 
 
     @app.callback(
@@ -907,7 +931,7 @@ def main():
                 "zIndex": 1000,
                 "alignItems": "center",
                 "justifyContent": "center",
-                "borderRadius": "12px"
+                "borderRadius": "4px"
             }
         return {"display": "none"}
     
@@ -966,18 +990,19 @@ def main():
         location = data.get("location_filter", "all")
         
         return html.Div([
-            html.Span(data.get('timestamp', 'Unknown'), style={"marginRight": "30px", "fontWeight": "500"}),
+            html.Span(data.get('timestamp', 'Unknown'), style={"marginRight": "30px", "fontWeight": "600", "color": CALTRANS_BLUE}),
             html.Span(f"{unique_ids} Vehicles", style={"marginRight": "30px", "fontWeight": "500"}),
             html.Span(f"{len(data.get('frames', []))} Frames", style={"marginRight": "30px", "fontWeight": "500"}),
             html.Span(f"Location: {location.upper()}", style={"marginRight": "30px", "fontWeight": "500"}),
             html.Span(
                 f"{incident_count} Incidents",
                 style={
-                    "fontWeight": "bold",
-                    "color": "#f5576c" if incident_count > 0 else "#4CAF50",
-                    "padding": "6px 12px",
-                    "borderRadius": "6px",
-                    "background": "rgba(245, 87, 108, 0.1)" if incident_count > 0 else "rgba(76, 175, 80, 0.1)"
+                    "fontWeight": "700",
+                    "color": "#c0392b" if incident_count > 0 else CALTRANS_GREEN,
+                    "padding": "5px 12px",
+                    "borderRadius": "4px",
+                    "background": "rgba(192, 57, 43, 0.1)" if incident_count > 0 else "rgba(0, 123, 95, 0.1)",
+                    "letterSpacing": "0.3px",
                 }
             ),
         ])
@@ -1016,16 +1041,16 @@ def main():
             vids = inc.get("vehicles", [])
             lines.append(
                 html.Div([
-                    html.Span(f"#{i} ", style={"fontWeight": "bold", "color": "#667eea"}),
-                    html.Span(f"{itype}", style={"fontWeight": "600", "marginRight": "10px"}),
-                    html.Span(f"Severity: {sev_txt}", style={"color": "#f5576c", "fontWeight": "600", "marginRight": "10px"}),
+                    html.Span(f"#{i} ", style={"fontWeight": "bold", "color": CALTRANS_BLUE}),
+                    html.Span(f"{itype}", style={"fontWeight": "700", "marginRight": "10px", "letterSpacing": "0.5px"}),
+                    html.Span(f"Severity: {sev_txt}", style={"color": "#c0392b", "fontWeight": "600", "marginRight": "10px"}),
                     html.Span(f"Vehicles: {len(vids)}", style={"color": "#666"}),
-                ], style={"marginBottom": "8px", "padding": "10px", "background": "#f8f9fa", "borderRadius": "6px"})
+                ], style={"marginBottom": "8px", "padding": "10px", "background": "#f8f9fa", "borderRadius": "4px"})
             )
 
         modal_text = html.Div([
             html.Div(f"{len(incidents)} incident(s) detected in this 15-second window", style={
-                "marginBottom": "15px", "fontSize": "16px", "fontWeight": "600", "color": "#333"
+                "marginBottom": "15px", "fontSize": "15px", "fontWeight": "600", "color": "#333", "letterSpacing": "0.3px"
             }),
             html.Div(lines),
         ])
@@ -1064,19 +1089,24 @@ def main():
                     video_id = video_info.get("_id")
                     return html.Div([
                         html.Hr(style={"margin": "20px 0"}),
-                        html.H4("Incident Video", style={"marginBottom": "15px"}),
+                        html.H4("Incident Video", style={
+                            "marginBottom": "15px",
+                            "color": CALTRANS_BLUE,
+                            "fontWeight": "700",
+                            "letterSpacing": "0.5px",
+                        }),
                         html.Video(
                             src=f"{API_BASE_URL}/videos/{video_id}",
                             controls=True,
                             autoPlay=True,
-                            style={"width": "100%", "borderRadius": "8px", "boxShadow": "0 4px 15px rgba(0,0,0,0.2)"}
+                            style={"width": "100%", "borderRadius": "4px", "boxShadow": "0 4px 15px rgba(0,0,0,0.2)"}
                         ),
                     ])
                 else:
-                    return html.Div("No video available for this incident", style={"color": "#f5576c", "marginTop": "15px"})
-            return html.Div("Could not load video", style={"color": "#f5576c", "marginTop": "15px"})
+                    return html.Div("No video available for this incident", style={"color": "#c0392b", "marginTop": "15px"})
+            return html.Div("Could not load video", style={"color": "#c0392b", "marginTop": "15px"})
         except Exception as e:
-            return html.Div(f"Error loading video: {str(e)}", style={"color": "#f5576c", "marginTop": "15px"})
+            return html.Div(f"Error loading video: {str(e)}", style={"color": "#c0392b", "marginTop": "15px"})
     
     @app.callback(
         Output("incident-modal", "style", allow_duplicate=True),
