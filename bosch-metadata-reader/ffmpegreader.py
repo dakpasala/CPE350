@@ -197,7 +197,7 @@ def parse_element(event, elem):
 rtsp_url = f'rtsp://{camera_info["url"]}/rtsp_tunnel?p=0&line=1&inst=1&vcd=2'
 
 if platform.system() == "Windows":
-    FFMPEG_PATH = r"C:\Users\sammu\Downloads\ffmpeg-2026-01-19-git-43dbc011fa-full_build\bin\ffmpeg.exe"
+    FFMPEG_PATH = r"C:\Users\Mike\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.0.1-full_build\bin\ffmpeg.exe"
 else:
     FFMPEG_PATH = shutil.which("ffmpeg")
 
