@@ -9,8 +9,8 @@ Comprehensive traffic monitoring dashboard combining:
 - Incident tracking
 
 URL Examples:
-- http://localhost:8052/?location=patterson&time_range=hour&source=historical
-- http://localhost:8052/?location=all&time_range=day&interval=1H
+- http://localhost:8060/?location=patterson&time_range=hour&source=historical
+- http://localhost:8060/?location=all&time_range=day&interval=1H
 """
 
 import dash
@@ -34,8 +34,12 @@ from typing import Optional, Dict, Any
 
 MAPBOX_TOKEN = "YOUR_MAPBOX_TOKEN_HERE"
 BACKEND_API_URL = "http://127.0.0.1:8000"
-DEFAULT_PORT = 8052
+DEFAULT_PORT = 8052  # Changed from 8060 to 8052
 MPS_TO_MPH = 2.2369362920544
+
+# Caltrans Colors
+CALTRANS_BLUE = "#003366"
+CALTRANS_GREEN = "#007B5F"
 
 # This will be injected by client.py for live streaming
 get_latest_data = None
@@ -266,8 +270,8 @@ def process_incident_data(incidents, incident_type=None, interval=None):
     return type_counts, timeseries
 
 
-def generate_heatmap_html(heatmap_points, incidents, current_vehicles):
-    """Generate deck.gl heatmap HTML."""
+def generate_heatmap_html(heatmap_points, incidents, current_vehicles, is_dark=True):
+    """Generate deck.gl heatmap HTML with theme support."""
     
     heatmap_data = json.dumps([[p['lon'], p['lat'], p.get('speed', 1)] for p in heatmap_points])
     incident_data = json.dumps([
@@ -285,6 +289,10 @@ def generate_heatmap_html(heatmap_points, incidents, current_vehicles):
     else:
         center_lat, center_lon = 35.2828, -120.6596
     
+    # Theme-aware styles
+    bg_color = "#0a0e27" if is_dark else "#f5f7fa"
+    map_style = "mapbox://styles/mapbox/dark-v11" if is_dark else "mapbox://styles/mapbox/light-v11"
+    
     return f"""
     <!DOCTYPE html>
     <html>
@@ -293,7 +301,7 @@ def generate_heatmap_html(heatmap_points, incidents, current_vehicles):
         <script src="https://api.mapbox.com/mapbox-gl-js/v2.9.1/mapbox-gl.js"></script>
         <link href="https://api.mapbox.com/mapbox-gl-js/v2.9.1/mapbox-gl.css" rel="stylesheet" />
         <style>
-            body {{ margin: 0; padding: 0; background: #0a0e27; overflow: hidden; }}
+            body {{ margin: 0; padding: 0; background: {bg_color}; overflow: hidden; }}
             #map {{ width: 100vw; height: 100vh; }}
         </style>
     </head>
@@ -305,7 +313,7 @@ def generate_heatmap_html(heatmap_points, incidents, current_vehicles):
             
             const map = new mapboxgl.Map({{
                 container: 'map',
-                style: 'mapbox://styles/mapbox/dark-v11',
+                style: '{map_style}',
                 center: [{center_lon}, {center_lat}],
                 zoom: 14,
                 pitch: 45,
@@ -384,31 +392,29 @@ body { margin: 0; padding: 0; overflow-x: hidden; }
 }
 .chart-card:hover {
     transform: translateY(-2px);
-    box-shadow: 0 8px 30px rgba(102, 126, 234, 0.2) !important;
+    box-shadow: 0 8px 30px rgba(0, 51, 102, 0.2) !important;
 }
 
-/* Theme Toggle Button */
+/* Theme Toggle Button - Caltrans Style */
 .theme-toggle-btn {
     display: flex;
     align-items: center;
     gap: 10px;
     padding: 8px 18px;
-    border-radius: 50px;
-    border: 2px solid rgba(0,0,0,0.12);
-    background: #ffffff;
+    border-radius: 4px;
+    border: 2px solid rgba(255,255,255,0.2);
+    background: rgba(255,255,255,0.1);
     cursor: pointer;
     font-size: 14px;
     font-weight: 600;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    color: #333;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+    color: white;
     transition: all 0.25s ease;
     user-select: none;
     white-space: nowrap;
 }
 .theme-toggle-btn:hover {
-    box-shadow: 0 4px 16px rgba(0,0,0,0.18);
-    transform: translateY(-1px);
+    background: rgba(255,255,255,0.2);
 }
 .theme-toggle-btn .toggle-track {
     width: 38px;
@@ -420,7 +426,7 @@ body { margin: 0; padding: 0; overflow-x: hidden; }
     flex-shrink: 0;
 }
 .theme-toggle-btn .toggle-track.active {
-    background: #667eea;
+    background: #007B5F;
 }
 .theme-toggle-btn .toggle-thumb {
     width: 18px;
@@ -436,12 +442,37 @@ body { margin: 0; padding: 0; overflow-x: hidden; }
 .theme-toggle-btn .toggle-track.active .toggle-thumb {
     transform: translateX(16px);
 }
-.theme-toggle-btn.dark-mode {
-    background: #2d2d2d;
-    border-color: rgba(255,255,255,0.15);
-    color: #e0e0e0;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+
+/* Home Button */
+.home-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 18px;
+    border-radius: 4px;
+    border: 2px solid rgba(255,255,255,0.2);
+    background: rgba(255,255,255,0.1);
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    color: white;
+    transition: all 0.25s ease;
+    text-decoration: none;
 }
+.home-btn:hover {
+    background: rgba(255,255,255,0.2);
+    color: white;
+}
+"""
+
+TOGGLE_JS = """
+window.DASHBOARD_THEME_KEY = 'dashboard_theme';
+(function() {
+    var match = document.cookie.match('(?:^|; )dashboard_theme=([^;]*)');
+    var saved = match ? match[1] : null;
+    if (saved) document.documentElement.setAttribute('data-theme', saved);
+})();
 """
 
 INDEX_STRING = '''
@@ -453,6 +484,7 @@ INDEX_STRING = '''
         {%favicon%}
         {%css%}
         <style>''' + CUSTOM_CSS + '''</style>
+        <script>''' + TOGGLE_JS + '''</script>
     </head>
     <body>
         {%app_entry%}
@@ -473,13 +505,13 @@ app.index_string = INDEX_STRING
 # =========================
 
 def get_card_style(is_dark=False):
-    """Get card styling based on theme."""
+    """Get card styling based on theme - Caltrans formal design."""
     return {
         "background": "#2d2d2d" if is_dark else "white",
         "padding": "20px",
-        "borderRadius": "12px",
-        "boxShadow": "0 4px 20px rgba(0,0,0,0.3)" if is_dark else "0 4px 20px rgba(0,0,0,0.08)",
-        "border": f"2px solid {'#404040' if is_dark else '#eee'}",
+        "borderRadius": "4px",
+        "boxShadow": "0 2px 10px rgba(0,0,0,0.05)",
+        "border": f"1px solid {'#404040' if is_dark else '#eee'}",
         "marginBottom": "20px"
     }
 
@@ -586,7 +618,7 @@ def make_filter_card(is_dark=False, current_values=None):
         html.Button("Apply Filters", id="apply-btn", n_clicks=0, style={
             "width": "100%",
             "padding": "12px",
-            "background": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+            "background": CALTRANS_BLUE, # "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
             "color": "white",
             "border": "none",
             "borderRadius": "8px",
@@ -624,8 +656,25 @@ def make_theme_toggle(toggle_id="theme-toggle"):
         ],
         style={
             "position": "fixed",
-            "top": "20px",
-            "right": "20px",
+            "top": "25px",
+            "right": "30px",
+            "zIndex": 10000,
+        }
+    )
+
+
+def make_home_button():
+    """Return the home button component."""
+    return html.A(
+        href="http://127.0.0.1:8050",
+        children=[
+            html.Span("← Home"),
+        ],
+        className="home-btn",
+        style={
+            "position": "fixed",
+            "top": "25px",
+            "left": "30px",
             "zIndex": 10000,
         }
     )
@@ -636,7 +685,8 @@ def make_theme_toggle(toggle_id="theme-toggle"):
 # =========================
 
 app.layout = html.Div([
-    make_theme_toggle("theme-toggle"),  # Add theme toggle
+    make_theme_toggle("theme-toggle"),
+    make_home_button(),
     
     dcc.Location(id='url', refresh=False),
     dcc.Store(id='config-store'),
@@ -644,26 +694,36 @@ app.layout = html.Div([
     dcc.Store(id='theme-store', data='light'),
     dcc.Interval(id='interval-component', interval=1000, n_intervals=0),
     
+    # Caltrans-style header
     html.Div([
-        html.H1("TRAFFIC MONITORING DASHBOARD", style={
+        html.H1("TRAFFIC ANALYSIS DASHBOARD", style={
             "color": "white",
             "margin": "0",
-            "fontSize": "36px",
-            "fontWeight": "bold",
-            "textShadow": "2px 2px 4px rgba(0,0,0,0.3)"
+            "fontSize": "32px",
+            "fontWeight": "800",
+            "letterSpacing": "1.5px"
         }),
-        html.P(id="subtitle", children="Comprehensive traffic analysis", style={
+        html.Div(style={
+            "width": "50px",
+            "height": "4px",
+            "background": CALTRANS_GREEN,
+            "margin": "15px auto"
+        }),
+        html.P("DIVISION OF TRAFFIC OPERATIONS • COMPREHENSIVE ANALYTICS PLATFORM", style={
             "color": "rgba(255,255,255,0.9)",
-            "margin": "10px 0 0 0",
-            "fontSize": "16px"
+            "margin": "0",
+            "fontSize": "13px",
+            "letterSpacing": "2px",
+            "fontWeight": "500"
         }),
     ], style={
-        "padding": "30px",
-        "background": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
-        "borderRadius": "12px",
+        "padding": "45px 30px",
+        "background": CALTRANS_BLUE,
+        "borderRadius": "4px",
         "marginBottom": "30px",
-        "boxShadow": "0 4px 20px rgba(0,0,0,0.1)",
-        "textAlign": "center"
+        "boxShadow": "0 4px 15px rgba(0,0,0,0.1)",
+        "textAlign": "center",
+        "borderBottom": f"6px solid {CALTRANS_GREEN}"
     }),
     
     html.Div(id='filters-container'),
@@ -679,22 +739,16 @@ app.layout = html.Div([
 @app.callback(
     Output('filters-container', 'children'),
     Input('theme-store', 'data'),
-    [State('location-dropdown', 'value'), 
-     State('time-dropdown', 'value'),
-     State('type-dropdown', 'value'),
-     State('interval-dropdown', 'value'),
-     State('source-dropdown', 'value')],
-    prevent_initial_call=False
 )
-def render_filters(theme, location_val, time_val, type_val, interval_val, source_val):
+def render_filters(theme):
     is_dark = theme == "dark"
-    # Pass current values to preserve them during theme switch
+    # Use default values on initial load
     current_values = {
-        'location': location_val if location_val else 'all',
-        'time': time_val if time_val else 'hour',
-        'type': type_val if type_val else 'car',
-        'interval': interval_val if interval_val else '15min',
-        'source': source_val if source_val else DATA_SOURCE_HISTORICAL
+        'location': 'all',
+        'time': 'hour',
+        'type': 'car',
+        'interval': '15min',
+        'source': DATA_SOURCE_HISTORICAL
     }
     return make_filter_card(is_dark, current_values)
 
@@ -866,65 +920,117 @@ def fetch_data(config):
 
 @app.callback(
     Output('heatmap-frame', 'srcDoc'),
-    Input('data-store', 'data')
+    [Input('data-store', 'data'), Input('theme-store', 'data')]
 )
-def update_heatmap(data):
+def update_heatmap(data, theme):
+    is_dark = theme == "dark"
+    bg_color = "#0a0e27" if is_dark else "#f5f7fa"
+    text_color = "#00ffff" if is_dark else "#333"
+    
     if not data or not data.get('vehicles'):
-        return "<html><body style='background:#0a0e27;color:#00ffff;display:flex;align-items:center;justify-content:center;height:100vh;'>No data available</body></html>"
+        return f"<html><body style='background:{bg_color};color:{text_color};display:flex;align-items:center;justify-content:center;height:100vh;'>No data available</body></html>"
     
     # Add to history
     for v in data['vehicles']:
         if v.get('lat') and v.get('lon'):
             vehicle_history.append({'lat': v['lat'], 'lon': v['lon'], 'speed': v.get('speed_mps', 0)})
     
-    return generate_heatmap_html(list(vehicle_history), data.get('incidents', []), data['vehicles'])
+    return generate_heatmap_html(list(vehicle_history), data.get('incidents', []), data['vehicles'], is_dark)
 
 
 @app.callback(
     Output('count-chart', 'figure'),
-    Input('data-store', 'data')
+    [Input('data-store', 'data'), Input('theme-store', 'data')]
 )
-def update_count_chart(data):
+def update_count_chart(data, theme):
+    is_dark = theme == "dark"
+    
     if not data or not data.get('exit_counts'):
-        return go.Figure().add_annotation(text="No data", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
+        fig = go.Figure()
+        fig.add_annotation(text="No data", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
+        fig.update_layout(
+            template='plotly_dark' if is_dark else 'plotly_white',
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(0,0,0,0)'
+        )
+        return fig
     
     df = pd.DataFrame(data['exit_counts'])
     fig = px.bar(df, x='direction', y='count', color='direction',
                  color_discrete_map={'N': '#17a2b8', 'E': '#28a745', 'S': '#ffc107', 'W': '#dc3545'})
-    fig.update_layout(template='plotly_dark', showlegend=False, xaxis_title="Direction", yaxis_title="Count")
+    fig.update_layout(
+        template='plotly_dark' if is_dark else 'plotly_white',
+        showlegend=False,
+        xaxis_title="Direction",
+        yaxis_title="Count",
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)'
+    )
     return fig
 
 
 @app.callback(
     Output('speed-chart', 'figure'),
-    Input('data-store', 'data')
+    [Input('data-store', 'data'), Input('theme-store', 'data')]
 )
-def update_speed_chart(data):
+def update_speed_chart(data, theme):
+    is_dark = theme == "dark"
+    
     if not data or not data.get('speed_stats'):
-        return go.Figure().add_annotation(text="No data", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
+        fig = go.Figure()
+        fig.add_annotation(text="No data", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
+        fig.update_layout(
+            template='plotly_dark' if is_dark else 'plotly_white',
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(0,0,0,0)'
+        )
+        return fig
     
     df = pd.DataFrame(data['speed_stats'])
     fig = px.bar(df, x='direction', y='avg_speed_mph', color='direction',
                  color_discrete_map={'N': '#17a2b8', 'E': '#28a745', 'S': '#ffc107', 'W': '#dc3545'},
                  hover_data={'count': True})
-    fig.update_layout(template='plotly_dark', showlegend=False, xaxis_title="Direction", yaxis_title="Speed (mph)")
+    fig.update_layout(
+        template='plotly_dark' if is_dark else 'plotly_white',
+        showlegend=False,
+        xaxis_title="Direction",
+        yaxis_title="Speed (mph)",
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)'
+    )
     return fig
 
 
 @app.callback(
     Output('incidents-chart', 'figure'),
-    Input('data-store', 'data')
+    [Input('data-store', 'data'), Input('theme-store', 'data')]
 )
-def update_incidents_chart(data):
+def update_incidents_chart(data, theme):
+    is_dark = theme == "dark"
+    
     if not data or not data.get('incident_ts'):
-        return go.Figure().add_annotation(text="No timeseries data", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
+        fig = go.Figure()
+        fig.add_annotation(text="No timeseries data", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
+        fig.update_layout(
+            template='plotly_dark' if is_dark else 'plotly_white',
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(0,0,0,0)'
+        )
+        return fig
     
     df = pd.DataFrame(data['incident_ts'])
     df['time_bin'] = pd.to_datetime(df['time_bin'])
     fig = px.scatter(df, x='time_bin', y='count', color='incident_type',
                      color_discrete_map={'collision': '#dc3545', 'near_miss': '#ffc107'})
     fig.update_traces(marker=dict(size=12, line=dict(width=2, color='white')), mode='markers')
-    fig.update_layout(template='plotly_dark', hovermode='x unified', xaxis_title="Time", yaxis_title="Incident Count")
+    fig.update_layout(
+        template='plotly_dark' if is_dark else 'plotly_white',
+        hovermode='x unified',
+        xaxis_title="Time",
+        yaxis_title="Incident Count",
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)'
+    )
     return fig
 
 
