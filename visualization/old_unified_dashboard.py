@@ -9,8 +9,8 @@ Comprehensive traffic monitoring dashboard combining:
 - Incident tracking
 
 URL Examples:
-- http://localhost:8052/?location=patterson&time_range=hour&source=historical
-- http://localhost:8052/?location=all&time_range=day&interval=1H
+- http://localhost:8060/?location=patterson&time_range=hour&source=historical
+- http://localhost:8060/?location=all&time_range=day&interval=1H
 """
 
 import dash
@@ -34,16 +34,24 @@ from typing import Optional, Dict, Any
 
 MAPBOX_TOKEN = "YOUR_MAPBOX_TOKEN_HERE"
 BACKEND_API_URL = "http://127.0.0.1:8000"
-DEFAULT_PORT = 8052
+DEFAULT_PORT = 8052  # Changed from 8060 to 8052
 MPS_TO_MPH = 2.2369362920544
 
 # Caltrans Colors
 CALTRANS_BLUE = "#003366"
 CALTRANS_GREEN = "#007B5F"
 
+# This will be injected by client.py for live streaming
+get_latest_data = None
+
 # Heatmap settings
 HEATMAP_HISTORY_SIZE = 200
+INCIDENT_DISPLAY_TIME = 300
 vehicle_history = deque(maxlen=HEATMAP_HISTORY_SIZE)
+incident_history = []
+
+DATA_SOURCE_LIVE = "live"
+DATA_SOURCE_HISTORICAL = "historical"
 
 
 # =========================
@@ -515,7 +523,8 @@ def make_filter_card(is_dark=False, current_values=None):
             'location': 'all',
             'time': 'hour',
             'type': 'car',
-            'interval': '15min'
+            'interval': '15min',
+            'source': DATA_SOURCE_HISTORICAL
         }
     
     text_color = "#e0e0e0" if is_dark else "#333"
@@ -541,7 +550,7 @@ def make_filter_card(is_dark=False, current_values=None):
                         {'label': 'Downtown', 'value': 'downtown'},
                         {'label': 'Highway 1', 'value': 'highway1'},
                     ],
-                    value=current_values['location'],
+                    value=current_values['location'],  # Use preserved value
                     clearable=False,
                     style={"marginBottom": "15px"}
                 )
@@ -557,7 +566,7 @@ def make_filter_card(is_dark=False, current_values=None):
                         {'label': 'Last 1 day', 'value': 'day'},
                         {'label': 'Last 1 week', 'value': 'week'},
                     ],
-                    value=current_values['time'],
+                    value=current_values['time'],  # Use preserved value
                     clearable=False,
                     style={"marginBottom": "15px"}
                 )
@@ -572,7 +581,7 @@ def make_filter_card(is_dark=False, current_values=None):
                         {'label': 'Truck', 'value': 'truck'},
                         {'label': 'Bus', 'value': 'bus'},
                     ],
-                    value=current_values['type'],
+                    value=current_values['type'],  # Use preserved value
                     clearable=False,
                     style={"marginBottom": "15px"}
                 )
@@ -587,19 +596,32 @@ def make_filter_card(is_dark=False, current_values=None):
                         {'label': '15 min', 'value': '15min'},
                         {'label': '1 hour', 'value': '1h'},
                     ],
-                    value=current_values['interval'],
+                    value=current_values['interval'],  # Use preserved value
                     clearable=False,
                     style={"marginBottom": "15px"}
                 )
             ], style={"flex": "1", "marginLeft": "15px"}),
+            html.Div([
+                html.Label("Source", style={"fontSize": "13px", "color": "#999" if is_dark else "#666", "marginBottom": "5px", "display": "block"}),
+                dcc.Dropdown(
+                    id='source-dropdown',
+                    options=[
+                        {'label': 'Live', 'value': DATA_SOURCE_LIVE},
+                        {'label': 'Historical', 'value': DATA_SOURCE_HISTORICAL},
+                    ],
+                    value=current_values['source'],  # Use preserved value
+                    clearable=False,
+                    style={"marginBottom": "15px"}
+                )
+            ], style={"flex": "0.8", "marginLeft": "15px"}),
         ], style={"display": "flex", "alignItems": "flex-end"}),
         html.Button("Apply Filters", id="apply-btn", n_clicks=0, style={
             "width": "100%",
             "padding": "12px",
-            "background": CALTRANS_BLUE,
+            "background": CALTRANS_BLUE, # "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
             "color": "white",
             "border": "none",
-            "borderRadius": "4px",
+            "borderRadius": "8px",
             "fontSize": "14px",
             "fontWeight": "600",
             "cursor": "pointer",
@@ -687,7 +709,7 @@ app.layout = html.Div([
             "background": CALTRANS_GREEN,
             "margin": "15px auto"
         }),
-        html.P("COMPREHENSIVE STATISTICS PLATFORM", style={
+        html.P("DIVISION OF TRAFFIC OPERATIONS • COMPREHENSIVE ANALYTICS PLATFORM", style={
             "color": "rgba(255,255,255,0.9)",
             "margin": "0",
             "fontSize": "13px",
@@ -720,12 +742,13 @@ app.layout = html.Div([
 )
 def render_filters(theme):
     is_dark = theme == "dark"
-    # Always use defaults - filters won't persist across theme changes but page will load
+    # Use default values on initial load
     current_values = {
         'location': 'all',
         'time': 'hour',
         'type': 'car',
-        'interval': '15min'
+        'interval': '15min',
+        'source': DATA_SOURCE_HISTORICAL
     }
     return make_filter_card(is_dark, current_values)
 
@@ -793,14 +816,14 @@ def render_content(data, theme):
     [Output('config-store', 'data'), Output('url', 'search')],
     [Input('url', 'search'), Input('apply-btn', 'n_clicks')],
     [State('location-dropdown', 'value'), State('time-dropdown', 'value'), 
-     State('type-dropdown', 'value'), State('interval-dropdown', 'value')]
+     State('type-dropdown', 'value'), State('interval-dropdown', 'value'), State('source-dropdown', 'value')]
 )
-def update_config(url_search, n_clicks, location, time_range, vehicle_type, interval):
+def update_config(url_search, n_clicks, location, time_range, vehicle_type, interval, source):
     triggered_id = ctx.triggered_id if ctx.triggered else None
     
     print(f"[CONFIG UPDATE] Triggered by: {triggered_id}")
     print(f"[CONFIG UPDATE] n_clicks: {n_clicks}")
-    print(f"[CONFIG UPDATE] Inputs: location={location}, time_range={time_range}, type={vehicle_type}, interval={interval}")
+    print(f"[CONFIG UPDATE] Inputs: location={location}, time_range={time_range}, type={vehicle_type}, interval={interval}, source={source}")
     
     if triggered_id == 'url' and url_search:
         params = parse_qs(url_search.lstrip('?'))
@@ -808,12 +831,14 @@ def update_config(url_search, n_clicks, location, time_range, vehicle_type, inte
         time_range = params.get('time_range', [time_range])[0]
         vehicle_type = params.get('only_type', [vehicle_type])[0]
         interval = params.get('interval', [interval])[0]
+        source = params.get('source', [source])[0]
     
     config = {
         'location': location,
         'time_range': time_range,
         'only_type': vehicle_type,
         'interval': interval,
+        'source': source,
         'updated_at': datetime.utcnow().isoformat()
     }
     
@@ -829,10 +854,23 @@ def update_config(url_search, n_clicks, location, time_range, vehicle_type, inte
             params.append(f"only_type={vehicle_type}")
         if interval:
             params.append(f"interval={interval}")
+        params.append(f"source={source}")
         new_url = f"?{'&'.join(params)}"
         print(f"[CONFIG] New URL: {new_url}")
     
     return config, new_url
+
+
+@app.callback(
+    Output('subtitle', 'children'),
+    Input('config-store', 'data')
+)
+def update_subtitle(config):
+    if not config:
+        return "Comprehensive traffic analysis"
+    
+    loc = config.get('location', 'all').upper() if config.get('location') != 'all' else 'ALL CAMERAS'
+    return f"{loc} • {config.get('time_range', 'hour').upper()} • {config.get('source', DATA_SOURCE_HISTORICAL).upper()}"
 
 
 @app.callback(
@@ -843,11 +881,23 @@ def fetch_data(config):
     if not config:
         return None
     
+    source = config.get('source', DATA_SOURCE_HISTORICAL)
     location = config.get('location')
     time_range = config.get('time_range', 'hour')
     
-    # Always fetch historical data
-    data = fetch_historical_data(location, time_range)
+    if source == DATA_SOURCE_HISTORICAL:
+        data = fetch_historical_data(location, time_range)
+    else:
+        if get_latest_data is None:
+            return None
+        latest = get_latest_data()
+        if not latest:
+            return None
+        data = {
+            'vehicles': latest.get('vehicles', []),
+            'incidents': latest.get('incidents', []),
+            'raw_stats': []
+        }
     
     # Process all analyses
     df_stats = pd.DataFrame(data['raw_stats']) if data['raw_stats'] else pd.DataFrame()
@@ -960,7 +1010,7 @@ def update_incidents_chart(data, theme):
     
     if not data or not data.get('incident_ts'):
         fig = go.Figure()
-        fig.add_annotation(text="No applicable data", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
+        fig.add_annotation(text="No timeseries data", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
         fig.update_layout(
             template='plotly_dark' if is_dark else 'plotly_white',
             paper_bgcolor='rgba(0,0,0,0)',
