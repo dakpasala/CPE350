@@ -31,7 +31,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / 'visualization'))
 # Import viewers from visualization/
 import map_viewer
 import incident_viewer
-import heatmap_viewer
+import unified_dashboard
 
 # WebSocket imports
 import websockets
@@ -165,10 +165,10 @@ def run_incident_viewer():
     incident_viewer.main()
 
 
-def run_heatmap_viewer():
+def run_unified_dashboard():
     """Run heatmap viewer in background thread."""
     print("[START] [Heatmap Viewer] Starting on http://0.0.0.0:8052...")
-    heatmap_viewer.main()
+    unified_dashboard.main()
 
 
 # =========================
@@ -195,7 +195,7 @@ def main():
     dashboard.get_latest_data = get_latest_data
     map_viewer.get_latest_data = get_latest_data
     incident_viewer.get_latest_data = get_latest_data
-    heatmap_viewer.get_latest_data = get_latest_data
+    unified_dashboard.get_latest_data = get_latest_data
     
     # Start WebSocket client in background thread
     print("[START] [WebSocket] Starting background receiver...")
@@ -223,7 +223,7 @@ def main():
     
     # Start heatmap viewer in background thread
     print("[START] [Heatmap Viewer] Starting background heatmap...")
-    heatmap_thread = threading.Thread(target=run_heatmap_viewer, daemon=True)
+    heatmap_thread = threading.Thread(target=run_unified_dashboard, daemon=True)
     heatmap_thread.start()
     
     # Give heatmap viewer a moment to start
