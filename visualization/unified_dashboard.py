@@ -9,10 +9,11 @@ Comprehensive traffic monitoring dashboard combining:
 - Incident tracking
 
 URL Examples:
-- http://localhost:8052/?location=patterson&time_range=hour&source=historical
-- http://localhost:8052/?location=all&time_range=day&interval=1H
+- http://localhost:8060/?location=patterson&time_range=hour&source=historical
+- http://localhost:8060/?location=all&time_range=day&interval=1H
 """
 
+import os
 import dash
 from dash import html, dcc, Input, Output, State, ctx
 import dash_bootstrap_components as dbc
@@ -26,13 +27,16 @@ import json
 from collections import deque
 import numpy as np
 from typing import Optional, Dict, Any
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 # =========================
 # Config
 # =========================
 
-MAPBOX_TOKEN = "YOUR_MAPBOX_TOKEN_HERE"
+MAPBOX_TOKEN = os.getenv("MAPBOX_ACCESS_TOKEN")
 BACKEND_API_URL = "http://127.0.0.1:8000"
 DEFAULT_PORT = 8052
 MPS_TO_MPH = 2.2369362920544
@@ -687,7 +691,7 @@ app.layout = html.Div([
             "background": CALTRANS_GREEN,
             "margin": "15px auto"
         }),
-        html.P("COMPREHENSIVE STATISTICS PLATFORM", style={
+        html.P("COMPREHENSIVE ANALYTICS PLATFORM", style={
             "color": "rgba(255,255,255,0.9)",
             "margin": "0",
             "fontSize": "13px",
@@ -790,10 +794,27 @@ def render_content(data, theme):
 
 
 @app.callback(
+    Output('config-store', 'data', allow_duplicate=True),
+    Input('url', 'pathname'),
+    prevent_initial_call='initial_duplicate'
+)
+def initialize_config(pathname):
+    """Initialize config with defaults on page load."""
+    return {
+        'location': 'all',
+        'time_range': 'hour',
+        'only_type': 'car',
+        'interval': '15min',
+        'updated_at': datetime.utcnow().isoformat()
+    }
+
+
+@app.callback(
     [Output('config-store', 'data'), Output('url', 'search')],
     [Input('url', 'search'), Input('apply-btn', 'n_clicks')],
     [State('location-dropdown', 'value'), State('time-dropdown', 'value'), 
-     State('type-dropdown', 'value'), State('interval-dropdown', 'value')]
+     State('type-dropdown', 'value'), State('interval-dropdown', 'value')],
+    prevent_initial_call=True
 )
 def update_config(url_search, n_clicks, location, time_range, vehicle_type, interval):
     triggered_id = ctx.triggered_id if ctx.triggered else None
@@ -897,7 +918,7 @@ def update_count_chart(data, theme):
     
     if not data or not data.get('exit_counts'):
         fig = go.Figure()
-        fig.add_annotation(text="No data", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
+        fig.add_annotation(text="No data available", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
         fig.update_layout(
             template='plotly_dark' if is_dark else 'plotly_white',
             paper_bgcolor='rgba(0,0,0,0)',
@@ -928,7 +949,7 @@ def update_speed_chart(data, theme):
     
     if not data or not data.get('speed_stats'):
         fig = go.Figure()
-        fig.add_annotation(text="No data", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
+        fig.add_annotation(text="No data available", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
         fig.update_layout(
             template='plotly_dark' if is_dark else 'plotly_white',
             paper_bgcolor='rgba(0,0,0,0)',
@@ -960,7 +981,7 @@ def update_incidents_chart(data, theme):
     
     if not data or not data.get('incident_ts'):
         fig = go.Figure()
-        fig.add_annotation(text="No applicable data", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
+        fig.add_annotation(text="No data available", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
         fig.update_layout(
             template='plotly_dark' if is_dark else 'plotly_white',
             paper_bgcolor='rgba(0,0,0,0)',
