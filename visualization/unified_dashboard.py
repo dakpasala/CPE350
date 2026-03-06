@@ -331,21 +331,21 @@ def generate_heatmap_html(heatmap_points, incidents, current_vehicles, is_dark=T
                     id: 'vehicles',
                     data: {vehicle_data},
                     getPosition: d => d.position,
-                    getFillColor: [0,255,255,200],
-                    getRadius: 8,
-                    radiusMinPixels: 5,
-                    radiusMaxPixels: 15
+                    getFillColor: [0,255,255,180],
+                    getRadius: 3,
+                    radiusMinPixels: 1.5,
+                    radiusMaxPixels: 4.5
                 }}),
                 new ScatterplotLayer({{
                     id: 'incidents',
                     data: {incident_data},
                     getPosition: d => d.position,
                     getFillColor: d => d.type === 'collision' ? [255,0,0,255] : [255,165,0,255],
-                    getRadius: d => 50 + d.severity * 100,
-                    radiusMinPixels: 25,
-                    radiusMaxPixels: 100,
+                    getRadius: d => 20 + d.severity * 30,
+                    radiusMinPixels: 8.5,
+                    radiusMaxPixels: 35,
                     stroked: true,
-                    lineWidthMinPixels: 4,
+                    lineWidthMinPixels: 2,
                     getLineColor: [255,255,255,255]
                 }})
             ];
