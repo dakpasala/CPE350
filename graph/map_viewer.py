@@ -44,6 +44,13 @@ if not MAPBOX_TOKEN:
     raise RuntimeError("MAPBOX_ACCESS_TOKEN is missing in .env")
 
 ANCHOR = {"lat": 34.441560, "lon": -119.808362}
+
+# Fixed camera positions — no DB lookup needed, cameras don't move
+CAMERA_COORDS = {
+    "patterson": {"lat": 34.441507, "lon": -119.8084},
+    "foothill":  {"lat": 35.29415,  "lon": -120.66821},
+}
+
 API_BASE_URL = "http://localhost:8000"
 
 MAP_STYLE = "mapbox://styles/mapbox/satellite-streets-v12"
@@ -140,26 +147,6 @@ def process_window_data(raw_data, location_filter="all"):
         import traceback
         traceback.print_exc()
         return None
-
-
-def compute_center(vehicles, trim=0.1):
-    """Trimmed-mean lat/lon over the given vehicles. Falls back to ANCHOR if empty."""
-    pts = [(v.get("lat"), v.get("lon")) for v in vehicles]
-    pts = [(lat, lon) for lat, lon in pts if lat is not None and lon is not None
-           and math.isfinite(lat) and math.isfinite(lon)]
-    if not pts:
-        return dict(ANCHOR)
-
-    lats = sorted(lat for lat, _ in pts)
-    lons = sorted(lon for _, lon in pts)
-    n = len(pts)
-    k = int(n * trim)
-    if n - 2 * k <= 0:
-        k = 0
-
-    lats2 = lats[k:n-k]
-    lons2 = lons[k:n-k]
-    return {"lat": sum(lats2) / len(lats2), "lon": sum(lons2) / len(lons2)}
 
 
 def build_figure(center, frame_vehicles, all_vehicles, incidents,
@@ -1230,16 +1217,11 @@ def main():
         # Decide center + zoom based on selected location.
         # We always render every dot/trajectory — the selection only moves the camera.
         if location_filter and location_filter != "all":
-            loc_vehicles = [v for v in all_vehicles if v.get("location") == location_filter]
-            if loc_vehicles:
-                center = compute_center(loc_vehicles)
-            else:
-                # Fallback: location had no points yet, use overall center
-                center = compute_center(all_vehicles)
+            center = CAMERA_COORDS.get(location_filter, ANCHOR)
             zoom = DEFAULT_ZOOM
         else:
             # All Locations: zoom out so every cluster is visible
-            center = compute_center(all_vehicles)
+            center = ANCHOR
             zoom = ALL_LOCATIONS_ZOOM
 
         new_fig = build_figure(
