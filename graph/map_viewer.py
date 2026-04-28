@@ -792,6 +792,7 @@ def main():
         dcc.Interval(id="reload-interval", interval=1000, n_intervals=0),
 
         dcc.Store(id="data-store", data=data),
+        dcc.Location(id="url", refresh=False),
         dcc.Store(id="current-frame", data=0),
         dcc.Store(id="playing", data=True),
         dcc.Store(id="alert-active", data=False),
@@ -966,15 +967,26 @@ def main():
         Output("location-selector", "value"),
         Input("raw-data-store", "data"),
         State("location-selector", "value"),
+        State("url", "search"),
     )
-    def populate_location_dropdown(raw_data, current_value):
+    def populate_location_dropdown(raw_data, current_value, url_search):
         if not raw_data or not raw_data.get("vehicles"):
             return [], "all"
 
         locations = sorted(set(v.get("location") for v in raw_data["vehicles"] if v.get("location")))
         options = [{"label": "All Locations", "value": "all"}]
         options.extend([{"label": loc.title(), "value": loc} for loc in locations])
-        # Always default to "all" if user hasn't picked anything yet
+
+        # On first load (current_value is "all" or None), honour the ?location= URL param
+        if not current_value or current_value == "all":
+            url_loc = None
+            if url_search:
+                from urllib.parse import parse_qs, urlparse
+                params = parse_qs(url_search.lstrip("?"))
+                url_loc = params.get("location", [None])[0]
+            if url_loc and url_loc in locations:
+                return options, url_loc
+
         default_value = current_value if current_value else "all"
         return options, default_value
 
