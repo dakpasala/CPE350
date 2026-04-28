@@ -50,21 +50,44 @@ BACKEND_WS_URL = "ws://127.0.0.1:8000/data/stream"
 # SHARED MEMORY (instead of JSON file)
 # =========================
 
-SHARED_DATA = None
+# FIXED: Store data per location instead of single blob
+SHARED_DATA = {}
 SHARED_DATA_LOCK = Lock()
 
 
 def get_latest_data():
-    """Get latest data from shared memory (called by all viewers)."""
+    """Get latest data from shared memory - combines all locations."""
     with SHARED_DATA_LOCK:
-        return SHARED_DATA
+        if not SHARED_DATA:
+            return None
+        
+        # Combine all locations into one payload
+        all_vehicles = []
+        all_incidents = []
+        latest_timestamp = None
+        
+        for location, data in SHARED_DATA.items():
+            if data:
+                all_vehicles.extend(data.get("vehicles", []))
+                all_incidents.extend(data.get("incidents", []))
+                ts = data.get("timestamp")
+                if ts and (latest_timestamp is None or ts > latest_timestamp):
+                    latest_timestamp = ts
+        
+        return {
+            "vehicles": all_vehicles,
+            "incidents": all_incidents,
+            "timestamp": latest_timestamp or "Unknown"
+        }
 
 
 def set_latest_data(data):
-    """Set latest data in shared memory (called by WebSocket)."""
+    """Set latest data in shared memory for a specific location."""
     global SHARED_DATA
     with SHARED_DATA_LOCK:
-        SHARED_DATA = data
+        location = data.get("location", "unknown")
+        SHARED_DATA[location] = data
+        print(f"[Memory] Updated data for location: {location} ({len(data.get('vehicles', []))} vehicles)")
 
 
 # =========================
@@ -237,12 +260,14 @@ def main():
         import socket
         hostname = socket.gethostname()
         local_ip = socket.gethostbyname(hostname)
-        print(f"  Map Viewer:      http://127.0.0.1:8050")
+        print(f"  Dashboard:       http://127.0.0.1:8050")
+        print(f"  Map Viewer:      http://127.0.0.1:8053")
         print(f"  Incident Viewer: http://127.0.0.1:8051")
         print(f"  Heatmap Viewer:  http://{local_ip}:8052  <- ACCESS FROM ANY DEVICE")
         print(f"                   http://127.0.0.1:8052  <- LOCAL ACCESS")
     except:
-        print(f"  Map Viewer:      http://127.0.0.1:8050")
+        print(f"  Dashboard:       http://127.0.0.1:8050")
+        print(f"  Map Viewer:      http://127.0.0.1:8053")
         print(f"  Incident Viewer: http://127.0.0.1:8051")
         print(f"  Heatmap Viewer:  http://127.0.0.1:8052")
     print("=" * 70)
