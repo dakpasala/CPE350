@@ -967,9 +967,10 @@ def main():
         Output("location-selector", "value"),
         Input("raw-data-store", "data"),
         State("location-selector", "value"),
+        State("location-selector", "options"),
         State("url", "search"),
     )
-    def populate_location_dropdown(raw_data, current_value, url_search):
+    def populate_location_dropdown(raw_data, current_value, current_options, url_search):
         if not raw_data or not raw_data.get("vehicles"):
             return [], "all"
 
@@ -977,11 +978,11 @@ def main():
         options = [{"label": "All Locations", "value": "all"}]
         options.extend([{"label": loc.title(), "value": loc} for loc in locations])
 
-        # On first load (current_value is "all" or None), honour the ?location= URL param
-        if not current_value or current_value == "all":
+        # Only apply the URL ?location= param on the very first load (options list was empty)
+        if not current_options:
             url_loc = None
             if url_search:
-                from urllib.parse import parse_qs, urlparse
+                from urllib.parse import parse_qs
                 params = parse_qs(url_search.lstrip("?"))
                 url_loc = params.get("location", [None])[0]
             if url_loc and url_loc in locations:
