@@ -16,6 +16,7 @@ Location filter behavior:
 import os
 import math
 import json
+import hashlib
 import requests
 from pathlib import Path
 from dotenv import load_dotenv
@@ -62,6 +63,7 @@ PORT = int(os.getenv("PORT", "8050"))
 
 PLAYBACK_FPS = 3
 FRAME_INTERVAL_MS = int(1000 / 3)
+MAX_TRAJECTORY_POINTS_PER_OBJECT = 120
 
 COLOR_MAP = {
     "car": "rgb(255,0,0)",
@@ -97,9 +99,6 @@ def process_window_data(raw_data, location_filter="all"):
         incidents = raw_data.get("incidents", [])
         timestamp = raw_data.get("timestamp")
 
-        if not vehicles:
-            return None
-
         vehicles_sorted = sorted(vehicles, key=lambda v: v.get("timestamp", ""))
 
         # Frames are built across ALL locations, keyed by timestamp,
@@ -133,12 +132,26 @@ def process_window_data(raw_data, location_filter="all"):
                 "vehicles": frame_data["vehicles"]
             })
 
+        # Use a content-based fingerprint instead of the top-level timestamp.
+        # In multi-location mode, one location can update while the "latest"
+        # timestamp stays unchanged, which previously caused updates to be skipped.
+        snapshot = {
+            "timestamp": timestamp,
+            "vehicle_count": len(vehicles_sorted),
+            "incident_count": len(incidents),
+            "vehicle_ids": [str(v.get("id")) for v in vehicles_sorted],
+            "vehicle_timestamps": [v.get("timestamp") for v in vehicles_sorted],
+        }
+        data_fingerprint = hashlib.sha1(
+            json.dumps(snapshot, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()
+
         return {
             "vehicles": vehicles_sorted,
             "incidents": incidents,
             "timestamp": timestamp,
             "frames": frames,
-            "data_id": timestamp,
+            "data_id": data_fingerprint,
             "location_filter": location_filter,
         }
 
@@ -170,6 +183,8 @@ def build_figure(center, frame_vehicles, all_vehicles, incidents,
             continue
 
         points.sort()
+        if len(points) > MAX_TRAJECTORY_POINTS_PER_OBJECT:
+            points = points[-MAX_TRAJECTORY_POINTS_PER_OBJECT:]
         lats = [p[1] for p in points]
         lons = [p[2] for p in points]
 
@@ -238,16 +253,14 @@ def build_figure(center, frame_vehicles, all_vehicles, incidents,
     # --- Incident markers ---
     if incidents and frame_vehicles:
         inc_lats, inc_lons, inc_texts = [], [], []
+        vehicles_by_id = {str(v.get("id")): v for v in frame_vehicles}
 
         for inc in incidents:
             vehicle_ids = inc.get("vehicles", [])
             if not vehicle_ids:
                 continue
 
-            first_vehicle = next(
-                (v for v in frame_vehicles if str(v.get("id")) == str(vehicle_ids[0])),
-                None
-            )
+            first_vehicle = vehicles_by_id.get(str(vehicle_ids[0]))
 
             if not first_vehicle:
                 continue
