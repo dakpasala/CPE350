@@ -11,6 +11,8 @@ Location filter behavior:
 - Selecting a location only changes the map center + zoom (camera focus).
 - "All Locations" zooms out to a California-wide view so every cluster is visible.
 - Animation frames are synced across locations by timestamp.
+- If a selected location isn't in CAMERA_COORDS, its center is computed from the
+  mean lat/lon of vehicles at that location in the current data window.
 """
 
 import os
@@ -46,7 +48,9 @@ if not MAPBOX_TOKEN:
 
 ANCHOR = {"lat": 34.441560, "lon": -119.808362}
 
-# Fixed camera positions — no DB lookup needed, cameras don't move
+# Fixed camera positions — no DB lookup needed, cameras don't move.
+# Locations NOT in this dict will have their center computed dynamically from
+# the average lat/lon of their vehicles in the current data window.
 CAMERA_COORDS = {
     "patterson": {"lat": 34.441507, "lon": -119.8084},
     "foothill":  {"lat": 35.29415,  "lon": -120.66821},
@@ -160,6 +164,37 @@ def process_window_data(raw_data, location_filter="all"):
         import traceback
         traceback.print_exc()
         return None
+
+
+def compute_center_for_location(all_vehicles, location):
+    """
+    Compute the geographic center of a location from its vehicles.
+
+    Returns a dict {"lat": ..., "lon": ...} or None if no usable points exist.
+    Uses the mean of lat/lon across all vehicle observations at that location.
+    """
+    if not all_vehicles or not location:
+        return None
+
+    lats, lons = [], []
+    for v in all_vehicles:
+        if v.get("location") != location:
+            continue
+        lat, lon = v.get("lat"), v.get("lon")
+        if lat is None or lon is None:
+            continue
+        if not (math.isfinite(lat) and math.isfinite(lon)):
+            continue
+        # Skip obviously bogus 0,0 coords
+        if lat == 0 and lon == 0:
+            continue
+        lats.append(lat)
+        lons.append(lon)
+
+    if not lats:
+        return None
+
+    return {"lat": sum(lats) / len(lats), "lon": sum(lons) / len(lons)}
 
 
 def build_figure(center, frame_vehicles, all_vehicles, incidents,
@@ -1232,7 +1267,12 @@ def main():
         # Decide center + zoom based on selected location.
         # We always render every dot/trajectory — the selection only moves the camera.
         if location_filter and location_filter != "all":
-            center = CAMERA_COORDS.get(location_filter, ANCHOR)
+            # Priority: hardcoded camera position > computed center from data > ANCHOR fallback
+            if location_filter in CAMERA_COORDS:
+                center = CAMERA_COORDS[location_filter]
+            else:
+                computed = compute_center_for_location(all_vehicles, location_filter)
+                center = computed if computed else ANCHOR
             zoom = DEFAULT_ZOOM
         else:
             # All Locations: zoom out so every cluster is visible

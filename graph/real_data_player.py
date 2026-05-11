@@ -33,18 +33,31 @@ CONNECTED_CLIENTS = set()
 # Data file
 DATA_FILE = "data.txt"
 
+# Location aliases: incoming raw names → canonical names used everywhere downstream
+LOCATION_ALIASES = {
+    "patterson1": "patterson",
+    "foothill1": "foothill",
+}
+
+
+def normalize_location(raw_location):
+    """Map raw location names (e.g. 'patterson1') to canonical ones ('patterson')."""
+    if not raw_location:
+        return "unknown"
+    return LOCATION_ALIASES.get(raw_location, raw_location)
+
 
 def parse_real_data_line(line):
     """
     Parse a line from data.txt and convert to our format.
-    
+
     Input format:
     {"location":"patterson1","data":{"timestamp":"...","objects":[{"id":"...","type":"Car",...}]}}
-    
+
     Output format (what client expects):
     {
         "type": "window_complete",
-        "location": "patterson1",
+        "location": "patterson",      # canonical (aliased)
         "timestamp": "...",
         "vehicles": [...],
         "incidents": []
@@ -52,11 +65,12 @@ def parse_real_data_line(line):
     """
     try:
         raw = json.loads(line.strip())
-        location = raw.get("location", "unknown")
+        raw_location = raw.get("location", "unknown")
+        location = normalize_location(raw_location)
         data = raw.get("data", {})
         timestamp = data.get("timestamp")
         objects = data.get("objects", [])
-        
+
         # Convert objects to our vehicle format
         vehicles = []
         for obj in objects:
@@ -64,10 +78,10 @@ def parse_real_data_line(line):
             loc = obj.get("location", [0, 0])
             lat = loc[0] if len(loc) > 0 else 0
             lon = loc[1] if len(loc) > 1 else 0
-            
+
             vehicle = {
                 "id": obj.get("id"),
-                "location": location,
+                "location": location,  # use canonical location on each vehicle too
                 "lat": lat,
                 "lon": lon,
                 "detected_type": obj.get("type", "Car").lower(),
@@ -79,13 +93,13 @@ def parse_real_data_line(line):
                 "zones": [obj.get("zone", "unknown")] if obj.get("zone") else [],
             }
             vehicles.append(vehicle)
-        
+
         return {
             "location": location,
             "timestamp": timestamp,
             "vehicles": vehicles
         }
-    
+
     except Exception as e:
         print(f"[ERROR] Failed to parse line: {e}")
         return None
@@ -94,70 +108,70 @@ def parse_real_data_line(line):
 def load_real_data(filename):
     """
     Load all data from data.txt and group by location and time window.
-    
+
     Returns: dict of {location: [windows]}
     where each window is a 15-second batch of vehicles
     """
     print(f"[LOADER] Reading data from {filename}...")
-    
-    # Group by location first
+
+    # Group by location first (canonical names — patterson1 + patterson both land in 'patterson')
     location_data = defaultdict(list)
-    
+
     try:
         with open(filename, 'r') as f:
             for line_num, line in enumerate(f, 1):
                 if not line.strip():
                     continue
-                
+
                 parsed = parse_real_data_line(line)
                 if parsed:
                     location = parsed["location"]
                     location_data[location].append(parsed)
-                
+
                 if line_num % 100 == 0:
                     print(f"[LOADER] Processed {line_num} lines...")
-    
+
     except FileNotFoundError:
         print(f"[ERROR] File not found: {filename}")
         print(f"[ERROR] Please create {filename} with your real data (one JSON per line)")
         return {}
-    
+
     print(f"[LOADER] Loaded data for {len(location_data)} locations")
     for loc, data in location_data.items():
         print(f"  - {loc}: {len(data)} data points")
-    
+
     # Group into 15-second windows
     windows_by_location = {}
-    
+
     for location, data_points in location_data.items():
         # Sort by timestamp
         data_points.sort(key=lambda x: x["timestamp"])
-        
+
         # Group into windows (collect ~15 seconds worth)
         windows = []
         current_window = []
         window_start = None
-        
+
         for point in data_points:
             if not window_start:
                 window_start = point["timestamp"]
                 current_window = [point]
             else:
                 current_window.append(point)
-                
+
                 # After collecting some data, create a window
                 if len(current_window) >= 15:  # ~15 data points = ~15 seconds
                     windows.append(current_window)
                     current_window = []
                     window_start = None
-        
+
         # Add remaining data as final window
         if current_window:
             windows.append(current_window)
-        
+
         windows_by_location[location] = windows
         print(f"  - {location}: Split into {len(windows)} windows")
-    
+
     return windows_by_location
 
 
@@ -169,10 +183,10 @@ def create_window_message(location, window_data):
     all_vehicles = []
     for point in window_data:
         all_vehicles.extend(point["vehicles"])
-    
+
     # Use first timestamp as window timestamp
     timestamp = window_data[0]["timestamp"] if window_data else datetime.now().isoformat()
-    
+
     return {
         "type": "window_complete",
         "location": location,
@@ -199,59 +213,59 @@ async def replay_data(windows_by_location):
     if not windows_by_location:
         print("[REPLAYER] No data to replay!")
         return
-    
+
     print("[REPLAYER] Starting data replay...")
-    
+
     # Track which window we're on for each location
     window_indices = {loc: 0 for loc in windows_by_location.keys()}
-    
+
     # Stagger locations by a few seconds
     location_offsets = {}
     for i, loc in enumerate(sorted(windows_by_location.keys())):
         location_offsets[loc] = i * 3  # 3 second stagger
-    
+
     while True:
         current_time = time.time()
-        
+
         for location, windows in windows_by_location.items():
             offset = location_offsets[location]
-            
+
             # Check if it's time to send data for this location
             if (current_time - offset) % 15 < 1:  # Every 15 seconds
                 window_idx = window_indices[location]
                 window_data = windows[window_idx]
-                
+
                 # Create message
                 message = create_window_message(location, window_data)
-                
+
                 print(f"[{location.upper()}] Window #{window_idx + 1}/{len(windows)}: {message['vehicle_count']} vehicles")
-                
+
                 # Broadcast to clients
                 await broadcast_to_clients(json.dumps(message))
-                
+
                 # Move to next window (loop back to start if at end)
                 window_indices[location] = (window_idx + 1) % len(windows)
-        
+
         await asyncio.sleep(1)
 
 
 async def handle_client(websocket):
     """Handle a client connection."""
     print(f"[CLIENT] New connection from {websocket.remote_address}")
-    
+
     # Add to connected clients
     CONNECTED_CLIENTS.add(websocket)
-    
+
     try:
         # Keep connection alive
         async for message in websocket:
             # Handle ping/pong
             if message == "ping":
                 await websocket.send("pong")
-    
+
     except websockets.exceptions.ConnectionClosed:
         print(f"[CLIENT] Connection closed")
-    
+
     finally:
         # Remove from connected clients
         CONNECTED_CLIENTS.discard(websocket)
@@ -262,14 +276,14 @@ async def main():
     print(" " * 15 + "REAL DATA REPLAYER SERVER")
     print("=" * 70)
     print()
-    
+
     # Load real data from file
     windows_by_location = load_real_data(DATA_FILE)
-    
+
     if not windows_by_location:
         print("\n[ERROR] No data loaded. Exiting.")
         return
-    
+
     print()
     print(f"WebSocket Server: ws://{HOST}:{PORT}{WS_PATH}")
     print()
@@ -277,13 +291,13 @@ async def main():
     print("Press Ctrl+C to stop")
     print("=" * 70)
     print()
-    
+
     # Start WebSocket server
     server = await websockets.serve(handle_client, HOST, PORT)
-    
+
     # Start data replay in background
     replay_task = asyncio.create_task(replay_data(windows_by_location))
-    
+
     # Keep running
     await asyncio.Future()  # Run forever
 
