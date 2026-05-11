@@ -116,12 +116,15 @@ def process_window_data(raw_data, location_filter="all"):
 
             try:
                 ts = pd.to_datetime(ts_str)
-                ts_rounded = ts.floor('10ms')
+                # Bucket observations into 250ms frames so vehicles from
+                # different locations (and slightly different timestamps)
+                # actually group together into the same animation frame.
+                ts_rounded = ts.floor('250ms')
                 ts_key = ts_rounded.isoformat()
 
                 frames_dict[ts_key]["vehicles"].append(v)
                 if frames_dict[ts_key]["timestamp_display"] is None:
-                    frames_dict[ts_key]["timestamp_display"] = ts_rounded.strftime('%H:%M:%S')
+                    frames_dict[ts_key]["timestamp_display"] = ts_rounded.strftime('%H:%M:%S.%f')[:-3]
             except Exception:
                 continue
 
