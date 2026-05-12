@@ -3,29 +3,42 @@
 real_data_replayer.py
 
 Reads real vehicle data from data.txt and replays it to client.py via WebSocket.
-Acts as a fake server that formats real camera data for the client.
+Acts as a fake server that emits the EXACT same wire format as the real server.py.
+
+Matched against server.py:
+  - broadcast_window_data() -> top-level message shape
+  - process_window_async()  -> per-vehicle shape
+
+Differences from before (now corrected):
+  - top-level timestamp uses datetime.utcnow().isoformat() (no tz suffix)
+  - per-vehicle `id` is a string
+  - per-vehicle `heading_deg` field added (was missing)
+  - per-vehicle `accel` defaults to None (was 0)
+  - per-vehicle `zones` field removed (real server doesn't emit it)
 
 Usage:
     1. Put your real data in data.txt (one JSON object per line)
     2. Stop your real server.py
     3. Run: python3 real_data_replayer.py
-    4. Run: python3 client.py (it will connect to this replayer)
-
-Data format expected in data.txt (one JSON per line):
-{"location":"patterson1","data":{"timestamp":"...","objects":[...]}}
+    4. Run: python3 client.py
 """
 
 import asyncio
 import websockets
 import json
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from collections import defaultdict
+
+import pandas as pd
 
 # Server settings (same as real server.py)
 HOST = "127.0.0.1"
 PORT = 8000
 WS_PATH = "/data/stream"
+
+# Match the real server's window length exactly
+WINDOW_SECONDS = 15
 
 # Store connected clients
 CONNECTED_CLIENTS = set()
@@ -49,55 +62,61 @@ def normalize_location(raw_location):
 
 def parse_real_data_line(line):
     """
-    Parse a line from data.txt and convert to our format.
+    Parse one line of data.txt into our internal point shape.
+    Each "point" = one raw camera packet (one timestamp, multiple objects).
 
-    Input format:
-    {"location":"patterson1","data":{"timestamp":"...","objects":[{"id":"...","type":"Car",...}]}}
-
-    Output format (what client expects):
-    {
-        "type": "window_complete",
-        "location": "patterson",      # canonical (aliased)
-        "timestamp": "...",
-        "vehicles": [...],
-        "incidents": []
-    }
+    The vehicle dicts produced here match EXACTLY the shape emitted by
+    server.py's process_window_async (per-vehicle dict construction).
     """
     try:
         raw = json.loads(line.strip())
         raw_location = raw.get("location", "unknown")
         location = normalize_location(raw_location)
         data = raw.get("data", {})
-        timestamp = data.get("timestamp")
+        ts_iso = data.get("timestamp")
         objects = data.get("objects", [])
 
-        # Convert objects to our vehicle format
+        if not ts_iso:
+            return None
+
+        ts = pd.to_datetime(ts_iso, errors="coerce", utc=True)
+        if pd.isna(ts):
+            return None
+
+        # Real server's per-vehicle timestamp comes from `row["timestamp"].isoformat()`
+        # after feature extraction. pandas Timestamp.isoformat() produces no trailing
+        # "Z" and no "+00:00" if the timestamp is naive. To match closely, strip the
+        # source's "Z" and emit a naive-style ISO string.
+        if ts_iso.endswith("Z"):
+            vehicle_ts = ts_iso[:-1]  # strip trailing Z
+        else:
+            vehicle_ts = ts_iso
+
         vehicles = []
         for obj in objects:
-            # Extract lat/lon from location array [lat, lon]
             loc = obj.get("location", [0, 0])
-            lat = loc[0] if len(loc) > 0 else 0
-            lon = loc[1] if len(loc) > 1 else 0
+            lat = loc[0] if len(loc) > 0 else None
+            lon = loc[1] if len(loc) > 1 else None
 
-            vehicle = {
-                "id": obj.get("id"),
-                "location": location,  # use canonical location on each vehicle too
-                "lat": lat,
-                "lon": lon,
+            # Match server.py shape exactly:
+            vehicles.append({
+                "id": str(obj.get("id")),                # stringified, like server
+                "lat": float(lat) if lat is not None else None,
+                "lon": float(lon) if lon is not None else None,
+                "speed_mps": float(obj.get("speed", 0) or 0),
+                "heading_deg": 0.0,                      # not in raw data; real server defaults to 0
+                "accel": None,                           # real server: None when missing (NOT 0)
+                "timestamp": vehicle_ts,
                 "detected_type": obj.get("type", "Car").lower(),
-                "certainty": obj.get("certainty", 0.5),
-                "timestamp": timestamp,
-                "speed_mps": obj.get("speed", 0),
-                "accel": 0,  # Not in raw data, set to 0
-                "incidents": [],
-                "zones": [obj.get("zone", "unknown")] if obj.get("zone") else [],
-            }
-            vehicles.append(vehicle)
+                "location": location,
+                "certainty": float(obj.get("certainty", 0) or 0),
+                "incidents": [],                         # we don't run detection here
+            })
 
         return {
             "location": location,
-            "timestamp": timestamp,
-            "vehicles": vehicles
+            "timestamp": ts,                             # for window-bucketing only
+            "vehicles": vehicles,
         }
 
     except Exception as e:
@@ -107,108 +126,130 @@ def parse_real_data_line(line):
 
 def load_real_data(filename):
     """
-    Load all data from data.txt and group by location and time window.
+    Load all data from data.txt and split each location's stream into
+    consecutive ~WINDOW_SECONDS windows of *timestamp* (not count).
 
-    Returns: dict of {location: [windows]}
-    where each window is a 15-second batch of vehicles
+    Returns: dict of {canonical_location: [windows]}
+        where each window = list of points, each spanning <= WINDOW_SECONDS
+        from the window's first point.
     """
     print(f"[LOADER] Reading data from {filename}...")
 
-    # Group by location first (canonical names — patterson1 + patterson both land in 'patterson')
-    location_data = defaultdict(list)
+    location_points = defaultdict(list)
 
     try:
-        with open(filename, 'r') as f:
+        with open(filename, "r") as f:
             for line_num, line in enumerate(f, 1):
                 if not line.strip():
                     continue
 
                 parsed = parse_real_data_line(line)
                 if parsed:
-                    location = parsed["location"]
-                    location_data[location].append(parsed)
+                    location_points[parsed["location"]].append(parsed)
 
-                if line_num % 100 == 0:
-                    print(f"[LOADER] Processed {line_num} lines...")
+                if line_num % 1000 == 0:
+                    print(f"[LOADER] Read {line_num} lines...")
 
     except FileNotFoundError:
         print(f"[ERROR] File not found: {filename}")
         print(f"[ERROR] Please create {filename} with your real data (one JSON per line)")
         return {}
 
-    print(f"[LOADER] Loaded data for {len(location_data)} locations")
-    for loc, data in location_data.items():
-        print(f"  - {loc}: {len(data)} data points")
+    print(f"[LOADER] Loaded raw points for {len(location_points)} locations")
+    for loc, pts in location_points.items():
+        print(f"  - {loc}: {len(pts)} raw points")
 
-    # Group into 15-second windows
     windows_by_location = {}
 
-    for location, data_points in location_data.items():
-        # Sort by timestamp
-        data_points.sort(key=lambda x: x["timestamp"])
+    for location, points in location_points.items():
+        points.sort(key=lambda p: p["timestamp"])
 
-        # Group into windows (collect ~15 seconds worth)
         windows = []
         current_window = []
-        window_start = None
+        window_start_ts = None
 
-        for point in data_points:
-            if not window_start:
-                window_start = point["timestamp"]
-                current_window = [point]
+        for p in points:
+            if not current_window:
+                current_window = [p]
+                window_start_ts = p["timestamp"]
+                continue
+
+            delta = (p["timestamp"] - window_start_ts).total_seconds()
+            if delta >= WINDOW_SECONDS:
+                windows.append(current_window)
+                current_window = [p]
+                window_start_ts = p["timestamp"]
             else:
-                current_window.append(point)
+                current_window.append(p)
 
-                # After collecting some data, create a window
-                if len(current_window) >= 15:  # ~15 data points = ~15 seconds
-                    windows.append(current_window)
-                    current_window = []
-                    window_start = None
-
-        # Add remaining data as final window
         if current_window:
             windows.append(current_window)
 
+        durations = []
+        for w in windows:
+            span = (w[-1]["timestamp"] - w[0]["timestamp"]).total_seconds()
+            durations.append(span)
+
+        avg_dur = sum(durations) / len(durations) if durations else 0
+        avg_pts = sum(len(w) for w in windows) / len(windows) if windows else 0
+        print(
+            f"  - {location}: split into {len(windows)} windows "
+            f"| avg duration={avg_dur:.1f}s | avg points/window={avg_pts:.1f}"
+        )
+
         windows_by_location[location] = windows
-        print(f"  - {location}: Split into {len(windows)} windows")
 
     return windows_by_location
 
 
-def create_window_message(location, window_data):
+def create_window_message(location, window_points):
     """
-    Create a window_complete message from a batch of data points.
-    """
-    # Combine all vehicles from the window
-    all_vehicles = []
-    for point in window_data:
-        all_vehicles.extend(point["vehicles"])
+    Build the EXACT same shape the real server emits via broadcast_window_data.
 
-    # Use first timestamp as window timestamp
-    timestamp = window_data[0]["timestamp"] if window_data else datetime.now().isoformat()
+    Match reference (server.py):
+        message = {
+            "type": "window_complete",
+            "location": location,
+            "timestamp": datetime.utcnow().isoformat(),
+            "vehicle_count": len(vehicles),
+            "incident_count": len(incidents),
+            "vehicles": vehicles,
+            "incidents": incidents
+        }
+    """
+    all_vehicles = []
+    for pt in window_points:
+        all_vehicles.extend(pt["vehicles"])
 
     return {
         "type": "window_complete",
         "location": location,
-        "timestamp": timestamp,
+        # Use naive UTC, matching real server's `datetime.utcnow().isoformat()`
+        "timestamp": datetime.utcnow().isoformat(),
         "vehicle_count": len(all_vehicles),
-        "incident_count": 0,  # No incidents in raw data
+        "incident_count": 0,
         "vehicles": all_vehicles,
         "incidents": [],
     }
 
 
 async def broadcast_to_clients(message):
-    """Send message to all connected clients."""
-    if CONNECTED_CLIENTS:
-        tasks = [client.send(message) for client in CONNECTED_CLIENTS]
-        await asyncio.gather(*tasks, return_exceptions=True)
+    """Send a JSON-encoded message to every connected client."""
+    if not CONNECTED_CLIENTS:
+        return
+    payload = json.dumps(message)
+    tasks = [client.send(payload) for client in CONNECTED_CLIENTS]
+    await asyncio.gather(*tasks, return_exceptions=True)
 
 
 async def replay_data(windows_by_location):
     """
-    Replay real data to connected clients.
-    Sends one window per location every 15 seconds (looping).
+    Replay loop. Each location pushes its next window every WINDOW_SECONDS of
+    wall-clock time, looping back to the first window after exhausting them.
+
+    First send happens IMMEDIATELY on startup (no 15s wait), matching the user
+    experience of the real server where the first window closes ~15s after the
+    first packet arrives.
     """
     if not windows_by_location:
         print("[REPLAYER] No data to replay!")
@@ -216,58 +257,58 @@ async def replay_data(windows_by_location):
 
     print("[REPLAYER] Starting data replay...")
 
-    # Track which window we're on for each location
-    window_indices = {loc: 0 for loc in windows_by_location.keys()}
+    window_indices = {loc: 0 for loc in windows_by_location}
+    next_send_at = {}
 
-    # Stagger locations by a few seconds
-    location_offsets = {}
-    for i, loc in enumerate(sorted(windows_by_location.keys())):
-        location_offsets[loc] = i * 3  # 3 second stagger
+    start_time = time.monotonic()
+    for i, loc in enumerate(sorted(windows_by_location)):
+        # First send: immediate for location 0, +1s for location 1, +2s for 2, etc.
+        # Just enough stagger to keep logs readable; doesn't affect correctness.
+        next_send_at[loc] = start_time + (i * 1.0)
 
     while True:
-        current_time = time.time()
+        now_mono = time.monotonic()
 
         for location, windows in windows_by_location.items():
-            offset = location_offsets[location]
+            if not windows:
+                continue
+            if now_mono < next_send_at[location]:
+                continue
 
-            # Check if it's time to send data for this location
-            if (current_time - offset) % 15 < 1:  # Every 15 seconds
-                window_idx = window_indices[location]
-                window_data = windows[window_idx]
+            idx = window_indices[location]
+            window_points = windows[idx]
 
-                # Create message
-                message = create_window_message(location, window_data)
+            message = create_window_message(location, window_points)
 
-                print(f"[{location.upper()}] Window #{window_idx + 1}/{len(windows)}: {message['vehicle_count']} vehicles")
+            span = (window_points[-1]["timestamp"] - window_points[0]["timestamp"]).total_seconds()
+            print(
+                f"[{location.upper()}] window #{idx + 1}/{len(windows)} "
+                f"| points={len(window_points)} | vehicles={message['vehicle_count']} "
+                f"| source-span={span:.1f}s"
+            )
 
-                # Broadcast to clients
-                await broadcast_to_clients(json.dumps(message))
+            await broadcast_to_clients(message)
 
-                # Move to next window (loop back to start if at end)
-                window_indices[location] = (window_idx + 1) % len(windows)
+            window_indices[location] = (idx + 1) % len(windows)
+            next_send_at[location] = now_mono + WINDOW_SECONDS
 
-        await asyncio.sleep(1)
+        await asyncio.sleep(0.25)
 
 
 async def handle_client(websocket):
-    """Handle a client connection."""
+    """One WebSocket client. Just keeps the connection alive and answers pings."""
     print(f"[CLIENT] New connection from {websocket.remote_address}")
-
-    # Add to connected clients
     CONNECTED_CLIENTS.add(websocket)
 
     try:
-        # Keep connection alive
         async for message in websocket:
-            # Handle ping/pong
             if message == "ping":
                 await websocket.send("pong")
 
     except websockets.exceptions.ConnectionClosed:
-        print(f"[CLIENT] Connection closed")
+        print("[CLIENT] Connection closed")
 
     finally:
-        # Remove from connected clients
         CONNECTED_CLIENTS.discard(websocket)
 
 
@@ -277,7 +318,6 @@ async def main():
     print("=" * 70)
     print()
 
-    # Load real data from file
     windows_by_location = load_real_data(DATA_FILE)
 
     if not windows_by_location:
@@ -286,20 +326,17 @@ async def main():
 
     print()
     print(f"WebSocket Server: ws://{HOST}:{PORT}{WS_PATH}")
+    print(f"Window length:    {WINDOW_SECONDS}s (matches real server)")
+    print(f"Wire format:      identical to server.py broadcast_window_data()")
     print()
     print("Waiting for client.py to connect...")
     print("Press Ctrl+C to stop")
     print("=" * 70)
     print()
 
-    # Start WebSocket server
-    server = await websockets.serve(handle_client, HOST, PORT)
-
-    # Start data replay in background
-    replay_task = asyncio.create_task(replay_data(windows_by_location))
-
-    # Keep running
-    await asyncio.Future()  # Run forever
+    await websockets.serve(handle_client, HOST, PORT)
+    asyncio.create_task(replay_data(windows_by_location))
+    await asyncio.Future()
 
 
 if __name__ == "__main__":
