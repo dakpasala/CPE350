@@ -127,7 +127,65 @@ def health():
 
 
 # =========================
-# Raw ingestion
+# Shared ingest helper
+# =========================
+#
+# Buffers a single frame document into the per-location 15s window and kicks
+# off processing when a window closes. Used by BOTH the existing /raw-vehicles
+# HTTP endpoint and the new /ingest WebSocket endpoint, so they're guaranteed
+# to behave identically.
+#
+# Returns True if a window closed (and processing was launched), False otherwise.
+
+def _ingest_one_doc(doc: dict) -> bool:
+    if not isinstance(doc, dict):
+        return False
+
+    now = datetime.utcnow()
+    location = doc.get("location", "unknown")
+
+    # Parse timestamp the same way /raw-vehicles always has
+    ts = doc.get("timestamp")
+    if isinstance(ts, str):
+        ts = pd.to_datetime(ts, errors="coerce")
+    elif isinstance(ts, datetime):
+        pass
+    else:
+        ts = pd.NaT
+
+    if pd.isna(ts):
+        return False
+
+    doc["_parsed_ts"] = ts
+
+    closed_window = None
+    with BUFFER_LOCK:
+        if location not in WINDOW_START:
+            WINDOW_START[location] = now
+            print(f"[NEW] Started new window for {location}")
+
+        RAW_BUFFER[location].append(doc)
+
+        window_start = WINDOW_START.get(location)
+        if window_start is not None:
+            elapsed = (now - window_start).total_seconds()
+            if elapsed >= WINDOW_SECONDS:
+                frozen_docs = list(RAW_BUFFER[location])
+                RAW_BUFFER[location].clear()
+                WINDOW_START[location] = now
+                closed_window = (location, frozen_docs, elapsed)
+
+    if closed_window:
+        loc, docs, elapsed = closed_window
+        print(f"[WINDOW] Window closed for {loc} after {elapsed:.1f}s | docs={len(docs)}")
+        Thread(target=process_window_async, args=(loc, docs), daemon=True).start()
+        return True
+
+    return False
+
+
+# =========================
+# Raw ingestion (HTTP — kept for backwards compatibility)
 # =========================
 
 @app.post("/raw-vehicles")
@@ -143,83 +201,78 @@ def ingest_raw_vehicles(payload: List[Dict]):
     if not payload:
         return {"received": 0, "windows_closed": 0}
 
-    now = datetime.utcnow()
-    windows_closed = 0
-    
     print(f"\n[RAW DATA] Received {len(payload)} vehicle records")
 
-    # -------------------------
-    # Buffer incoming docs
-    # -------------------------
-    with BUFFER_LOCK:
-        for doc in payload:
-            location = doc.get("location", "unknown")
-
-            # Initialize window if needed
-            if location not in WINDOW_START:
-                WINDOW_START[location] = now
-                print(f"[NEW] Started new window for {location}")
-
-            ts = doc.get("timestamp")
-            if isinstance(ts, str):
-                ts = pd.to_datetime(ts, errors="coerce")
-            elif isinstance(ts, datetime):
-                ts = ts
-            else:
-                ts = pd.NaT
-
-            if pd.isna(ts):
-                continue
-
-            doc["_parsed_ts"] = ts
-            RAW_BUFFER[location].append(doc)
-
-    # -------------------------
-    # Check if windows should close
-    # -------------------------
-    locations_to_process = []
-    
-    with BUFFER_LOCK:
-        for location in list(RAW_BUFFER.keys()):
-            buf = RAW_BUFFER[location]
-            if not buf:
-                continue
-            
-            window_start = WINDOW_START.get(location)
-            if window_start is None:
-                continue
-            
-            # Calculate window duration
-            elapsed = (now - window_start).total_seconds()
-            
-            # KEY: Only process if window is COMPLETE
-            if elapsed >= WINDOW_SECONDS:
-                print(f"[WINDOW] Window closed for {location} after {elapsed:.1f}s | docs={len(buf)}")
-                
-                # Freeze buffer
-                frozen_docs = list(buf)
-                locations_to_process.append((location, frozen_docs))
-                
-                # Clear buffer and restart window
-                RAW_BUFFER[location].clear()
-                WINDOW_START[location] = now
-                windows_closed += 1
-
-    # -------------------------
-    # Process closed windows asynchronously
-    # -------------------------
-    for location, docs in locations_to_process:
-        Thread(
-            target=process_window_async,
-            args=(location, docs),
-            daemon=True
-        ).start()
+    windows_closed = 0
+    for doc in payload:
+        if _ingest_one_doc(doc):
+            windows_closed += 1
 
     return {
         "received": len(payload),
         "windows_closed": windows_closed,
         "window_seconds": WINDOW_SECONDS,
     }
+
+
+# =========================
+# Raw ingestion (WebSocket — preferred for live cameras)
+# =========================
+#
+# Each ffmpegreader process opens one persistent WebSocket here and streams
+# frame documents as JSON messages of the form:
+#
+#     {"type": "raw_vehicle", "doc": { ...same shape as /raw-vehicles item... }}
+#
+# Buffering / processing is identical to /raw-vehicles — both paths feed
+# _ingest_one_doc above.
+
+@app.websocket("/ingest")
+async def ingest_stream(websocket: WebSocket):
+    await websocket.accept()
+    client = websocket.client
+    print(f"[INGEST-WS] Connected: {client}")
+
+    msg_count = 0
+    windows_closed = 0
+
+    try:
+        async for raw in websocket.iter_text():
+            try:
+                msg = json.loads(raw)
+            except json.JSONDecodeError as e:
+                print(f"[INGEST-WS] Bad JSON from {client}: {e}")
+                continue
+
+            msg_type = msg.get("type")
+
+            if msg_type == "raw_vehicle":
+                doc = msg.get("doc")
+                if not isinstance(doc, dict):
+                    continue
+                if _ingest_one_doc(doc):
+                    windows_closed += 1
+                msg_count += 1
+
+                # Light periodic heartbeat in logs (every ~500 frames)
+                if msg_count % 500 == 0:
+                    print(
+                        f"[INGEST-WS] {client} | msgs={msg_count} "
+                        f"| windows_closed={windows_closed}"
+                    )
+
+            elif msg_type == "ping":
+                await websocket.send_text(json.dumps({"type": "pong"}))
+
+            else:
+                print(f"[INGEST-WS] Unknown message type from {client}: {msg_type}")
+
+    except WebSocketDisconnect:
+        print(f"[INGEST-WS] Disconnected: {client} | total_msgs={msg_count}")
+    except Exception as e:
+        print(f"[INGEST-WS] Error on {client}: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 # =========================
@@ -917,7 +970,7 @@ def delete_combined_stats_endpoint(time_range: str = "day"):
 
 
 # =========================
-# WebSocket streaming
+# WebSocket streaming (frontend — sends out window_complete messages)
 # =========================
 
 @app.websocket("/data/stream")

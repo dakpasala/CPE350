@@ -22,7 +22,7 @@ from pointSearch import whichLane, setLanePairsFromDBList
 from collectData import pushObjectData
 from mongointerface import get_camera_data
 from broadcastlatlon import connect_to_server, send_websocket_data
-from send_to_api import send_to_api
+from send_to_server import send_to_api
 
 # -------------------------------------------------------
 # 1. Initialize camera info + globals
